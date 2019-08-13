@@ -24,9 +24,9 @@ import javax.swing.*;
 
 import docking.DialogComponentProvider;
 import docking.DockingWindowManager;
+import docking.tool.ToolConstants;
 import docking.widgets.OptionDialog;
-import ghidra.util.HelpLocation;
-import ghidra.util.SystemUtilities;
+import ghidra.util.*;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.timer.GTimer;
 
@@ -147,7 +147,7 @@ public class TaskDialog extends DialogComponentProvider implements TaskMonitor {
 		}
 
 		// SPLIT the help for this dialog should not be in the front end plugin.
-		setHelpLocation(new HelpLocation("Tool", "TaskDialog"));
+		setHelpLocation(new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "TaskDialog"));
 	}
 
 	/**
@@ -205,12 +205,12 @@ public class TaskDialog extends DialogComponentProvider implements TaskMonitor {
 	@Override
 	public void setCancelEnabled(boolean enable) {
 		monitorComponent.setCancelEnabled(enable);
-		super.setCancelEnabled(enable);
+		Swing.runLater(() -> super.setCancelEnabled(enable));
 	}
 
 	@Override
 	public boolean isCancelEnabled() {
-		return super.isCancelEnabled();
+		return monitorComponent.isCancelEnabled();
 	}
 
 	public synchronized void taskProcessed() {
@@ -317,7 +317,7 @@ public class TaskDialog extends DialogComponentProvider implements TaskMonitor {
 
 	@Override
 	public String getMessage() {
-		return monitorComponent.getMessage();
+		return getStatusText();
 	}
 
 	@Override

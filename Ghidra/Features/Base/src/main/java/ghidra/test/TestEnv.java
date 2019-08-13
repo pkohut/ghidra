@@ -29,6 +29,7 @@ import org.jdom.Element;
 import docking.ComponentProvider;
 import docking.DialogComponentProvider;
 import docking.test.AbstractDockingTest;
+import docking.tool.ToolConstants;
 import generic.jar.ResourceFile;
 import generic.test.*;
 import ghidra.app.events.CloseProgramPluginEvent;
@@ -225,6 +226,10 @@ public class TestEnv {
 	}
 
 	public void closeTool(PluginTool toolToClose, boolean ignoreChanges) {
+		if (toolToClose == tool) {
+			tool = null;
+		}
+
 		extraTools.remove(toolToClose);
 		AbstractGenericTest.executeOnSwingWithoutBlocking(() -> {
 			if (ignoreChanges) {
@@ -598,7 +603,7 @@ public class TestEnv {
 	 */
 	public PluginTool launchAnotherDefaultTool() {
 		PluginTool newTool = createDefaultTool();
-		newTool.setToolName(newTool.getToolName() + toolID++);
+		AbstractGenericTest.runSwing(() -> newTool.setToolName(newTool.getToolName() + toolID++));
 		extraTools.add(newTool);
 		return newTool;
 
@@ -766,7 +771,7 @@ public class TestEnv {
 	 * Open a read-only test program from the test data directory.
 	 * This program must be released prior to disposing this test environment.
 	 * NOTE: Some tests rely on this method returning null when file does
-	 * not yet exist within the resource area (e.g., CUnit binaries for Processor Tests)
+	 * not yet exist within the resource area (e.g., test binaries for P-Code Tests)
 	 *
 	 * @param programName name of program database within the test data directory.
 	 * @return program or null if program file not found
@@ -883,7 +888,7 @@ public class TestEnv {
 	protected void setAutoSaveEnabled(final FrontEndTool frontEndToolInstance,
 			final boolean enabled) {
 		AbstractGenericTest.runSwing(() -> {
-			Options options = frontEndToolInstance.getOptions("Tool");
+			Options options = frontEndToolInstance.getOptions(ToolConstants.TOOL_OPTIONS);
 			options.setBoolean(FrontEndTool.AUTOMATICALLY_SAVE_TOOLS, enabled);
 		});
 	}

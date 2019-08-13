@@ -1144,7 +1144,8 @@ int4 ActionDirectWrite::apply(Funcdata &data)
       dvn = op->getOut();
       if (!dvn->isDirectWrite()) {
 	dvn->setDirectWrite();
-	if (propagateIndirect || op->code() != CPUI_INDIRECT)	// If INDIRECT, output is marked, but does not propagate
+	// For call based INDIRECTs, output is marked, but does not propagate depending on setting
+	if (propagateIndirect || op->code() != CPUI_INDIRECT || op->isIndirectStore())
 	  worklist.push_back(dvn);
       }
     }
@@ -1715,7 +1716,13 @@ uint4 ActionLikelyTrash::countMarks(PcodeOp *op)
 	res += 1;
 	break;
       }
-      if (!vn->isWritten()||(vn->getDef()->code()!=CPUI_INDIRECT)) // Chain up through INDIRECTs
+      if (!vn->isWritten()) break;
+      PcodeOp *defOp = vn->getDef();
+      if (defOp == op) {	// We have looped all the way around
+	res += 1;
+	break;
+      }
+      else if (defOp->code() != CPUI_INDIRECT)	// Chain up through INDIRECTs
 	break;
       vn = vn->getDef()->getIn(0);
     }
@@ -1762,6 +1769,12 @@ bool ActionLikelyTrash::traceTrash(Varnode *vn,vector<PcodeOp *> &indlist)
       case CPUI_INDIRECT:
 	if (outvn->isPersist())
 	  istrash = false;
+	else if (op->isIndirectStore()) {
+	  if (!outvn->isMark()) {
+	    outvn->setMark();
+	    markedlist.push_back(outvn);
+	  }
+	}
 	else
 	  indlist.push_back(op);
 	break;
@@ -2494,8 +2507,8 @@ void ActionMarkExplicit::checkNewToConstructor(Funcdata &data,Varnode *vn)
   if (firstuse->numInput() < 2) return;		// Must have at least 1 parameter (plus destination varnode)
   if (firstuse->getIn(1) != vn) return;		// First parameter must result of new
 //  if (!fc->isConstructor()) return;		// Function must be a constructor
-  data.opSetFlag(firstuse,PcodeOp::special_print);	// Mark call to print the new operator as well
-  data.opSetFlag(op,PcodeOp::nonprinting);	// Don't print the new operator as stand-alone operation
+  data.opMarkSpecialPrint(firstuse);		// Mark call to print the new operator as well
+  data.opMarkNonPrinting(op);			// Don't print the new operator as stand-alone operation
 }
 
 int4 ActionMarkExplicit::apply(Funcdata &data)
@@ -3246,7 +3259,7 @@ int4 ActionConditionalConst::apply(Funcdata &data)
     if (flipEdge)
       constEdge = 1 - constEdge;
     FlowBlock *constBlock = bl->getOut(constEdge);
-    if (constBlock->sizeIn() != 1) continue;	// Must only be one path to constant block directly through CBRANCH
+    if (!constBlock->restrictedByConditional(bl)) continue;	// Make sure condition holds
     propagateConstant(varVn,constVn,constBlock,data);
   }
   return 0;
@@ -4451,12 +4464,15 @@ void universal_action(Architecture *conf)
 	actprop->addRule( new RuleTrivialArith("analysis") );
 	actprop->addRule( new RuleTrivialBool("analysis") );
 	actprop->addRule( new RuleTrivialShift("analysis") );
+	actprop->addRule( new RuleSignShift("analysis") );
+	actprop->addRule( new RuleTestSign("analysis") );
 	actprop->addRule( new RuleIdentityEl("analysis") );
 	actprop->addRule( new RuleOrMask("analysis") );
 	actprop->addRule( new RuleAndMask("analysis") );
 	actprop->addRule( new RuleOrCollapse("analysis") );
 	actprop->addRule( new RuleAndOrLump("analysis") );
 	actprop->addRule( new RuleShiftBitops("analysis") );
+	actprop->addRule( new RuleRightShiftAnd("analysis") );
 	actprop->addRule( new RuleNotDistribute("analysis") );
 	actprop->addRule( new RuleHighOrderAnd("analysis") );
 	actprop->addRule( new RuleAndDistribute("analysis") );
@@ -4465,6 +4481,7 @@ void universal_action(Architecture *conf)
 	actprop->addRule( new RuleAndCompare("analysis") );
 	actprop->addRule( new RuleDoubleSub("analysis") );
 	actprop->addRule( new RuleDoubleShift("analysis") );
+	actprop->addRule( new RuleDoubleArithShift("analysis") );
 	actprop->addRule( new RuleConcatShift("analysis") );
 	actprop->addRule( new RuleLeftRight("analysis") );
 	actprop->addRule( new RuleShiftCompare("analysis") );

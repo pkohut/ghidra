@@ -15,8 +15,7 @@
  */
 package ghidra.graph.viewer.edge;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 import java.util.*;
 
@@ -676,12 +675,12 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		nonHoveredEdges.removeAll(expectedEdges);
 
 		for (TestEdge e : expectedEdges) {
-			boolean isHovered = swing(() -> e.isInActivePath());
+			boolean isHovered = swing(() -> e.isInHoveredVertexPath());
 			assertTrue("Edge was not hovered: " + e, isHovered);
 		}
 
 		for (TestEdge e : nonHoveredEdges) {
-			boolean isHovered = swing(() -> e.isInActivePath());
+			boolean isHovered = swing(() -> e.isInHoveredVertexPath());
 			assertFalse("Edge hovered when it should not have been: " + e, isHovered);
 		}
 	}
@@ -695,7 +694,7 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 
 	private void assertNotHovered(TestEdge... edges) {
 		for (TestEdge e : edges) {
-			boolean isHovered = swing(() -> e.isInActivePath());
+			boolean isHovered = swing(() -> e.isInHoveredVertexPath());
 			assertFalse("Edge should not have been hovered: " + e, isHovered);
 		}
 	}
@@ -726,10 +725,12 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 
 	private void focusMode(PathHighlightMode mode) {
 		swing(() -> graphComponent.setVertexFocusPathHighlightMode(mode));
+		waitForPathHighligter();
 	}
 
 	private void hoverMode(PathHighlightMode mode) {
 		swing(() -> graphComponent.setVertexHoverPathHighlightMode(mode));
+		waitForPathHighligter();
 	}
 
 	@Override
