@@ -17,19 +17,14 @@
 #include "translate.hh"
 
 /// Calculate \e highest based on \e addressSize, and \e wordsize.
+/// This also calculates the default pointerLowerBound
 void AddrSpace::calcScaleMask(void)
 
 {
+  pointerLowerBound = (addressSize < 3) ? 0x100: 0x1000;
   highest = calc_mask(addressSize); // Maximum address
   highest = highest * wordsize + (wordsize-1); // Maximum byte address
-}
-
-/// Called once during initialization to assign a single character shortcut for the space
-/// The character is used as a shorthand when typing addresses on the console command line
-void AddrSpace::assignShortcut(void)
-
-{
-  shortcut = manage->assignShortcut(type);
+  pointerUpperBound = highest;
 }
 
 /// Initialize an address space with its basic attributes
@@ -55,6 +50,8 @@ AddrSpace::AddrSpace(AddrSpaceManager *m,const Translate *t,spacetype tp,const s
   index = ind;
   delay = dl;
   deadcodedelay = dl;		// Deadcode delay initially starts the same as heritage delay
+  minimumPointerSize = 0;	// (initially) assume pointers must match the space size exactly
+  shortcut = ' ';		// Placeholder meaning shortcut is unassigned
 
   // These are the flags we allow to be set from constructor
   flags = (fl & hasphysical);
@@ -63,7 +60,6 @@ AddrSpace::AddrSpace(AddrSpaceManager *m,const Translate *t,spacetype tp,const s
   flags |= (heritaged | does_deadcode);		// Always on unless explicitly turned off in derived constructor
   
   calcScaleMask();
-  assignShortcut();
 }
 
 /// This is a partial constructor, for initializing a space
@@ -80,6 +76,8 @@ AddrSpace::AddrSpace(AddrSpaceManager *m,const Translate *t,spacetype tp)
   type = tp;
   flags = (heritaged | does_deadcode);		// Always on unless explicitly turned off in derived constructor
   wordsize = 1;
+  minimumPointerSize = 0;
+  shortcut = ' ';
   // We let big_endian get set by attribute
 }
 
@@ -109,6 +107,7 @@ void AddrSpace::truncateSpace(uint4 newsize)
 {
   setFlags(truncated);
   addressSize = newsize;
+  minimumPointerSize = newsize;
   calcScaleMask();
 }
 
@@ -349,7 +348,6 @@ void AddrSpace::restoreXml(const Element *el)
   if (deadcodedelay == -1)
     deadcodedelay = delay;	// If deadcodedelay attribute not present, set it to delay
   calcScaleMask();
-  assignShortcut();
 }
 
 /// This constructs the unique constant space
@@ -390,6 +388,42 @@ void ConstantSpace::restoreXml(const Element *el)
 
 {
   throw LowlevelError("Should never restore the constant space from XML");
+}
+
+/// Construct the \b other space, which is automatically constructed
+/// by the compiler, and is only constructed once.  The name should
+/// always by \b OTHER.
+/// \param m is the associated address space manager
+/// \param t is the associated processor translator
+/// \param nm is the name of the space
+/// \param ind is the integer identifier
+OtherSpace::OtherSpace(AddrSpaceManager *m,const Translate *t,
+		       const string &nm,int4 ind)
+  : AddrSpace(m,t,IPTR_PROCESSOR,nm,sizeof(uintb),1,ind,0,0)
+{
+  clearFlags(heritaged|does_deadcode);
+  setFlags(is_otherspace);
+}
+
+OtherSpace::OtherSpace(AddrSpaceManager *m,const Translate *t)
+  : AddrSpace(m,t,IPTR_PROCESSOR)
+{
+  clearFlags(heritaged|does_deadcode);
+  setFlags(is_otherspace);
+}
+
+void OtherSpace::printRaw(ostream &s,uintb offset) const
+
+{
+  s << "0x" << hex << offset;
+}
+
+void OtherSpace::saveXml(ostream &s) const
+
+{
+  s << "<space_other";
+  saveBasicAttributes(s);
+  s << "/>\n";
 }
 
 /// This is the constructor for the \b unique space, which is
@@ -653,7 +687,6 @@ void OverlaySpace::restoreXml(const Element *el)
   delay = baseSpace->getDelay();
   deadcodedelay = baseSpace->getDeadcodeDelay();
   calcScaleMask();
-  assignShortcut();
 
   if (baseSpace->isBigEndian())
     setFlags(big_endian);

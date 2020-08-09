@@ -18,50 +18,97 @@ package docking.test;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
-import java.awt.*;
-import java.awt.datatransfer.*;
-import java.awt.event.*;
+import java.awt.AWTEvent;
+import java.awt.AWTException;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dialog;
+import java.awt.Frame;
+import java.awt.Graphics;
+import java.awt.Image;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Robot;
+import java.awt.Window;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.event.FocusEvent;
+import java.awt.event.FocusListener;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.util.Collections;
+import java.util.ConcurrentModificationException;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
-import javax.swing.*;
+import javax.swing.AbstractButton;
+import javax.swing.Action;
+import javax.swing.Icon;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JRadioButton;
+import javax.swing.JTabbedPane;
+import javax.swing.JTextField;
+import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.text.JTextComponent;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
 
-import com.google.common.collect.Sets;
-
-import docking.*;
+import docking.ActionContext;
+import docking.ComponentPlaceholder;
+import docking.ComponentProvider;
+import docking.DialogComponentProvider;
+import docking.DockableComponent;
+import docking.DockingDialog;
+import docking.DockingErrorDisplay;
+import docking.DockingWindowManager;
+import docking.EmptyBorderToggleButton;
+import docking.Tool;
 import docking.action.DockingActionIf;
 import docking.action.ToggleDockingActionIf;
 import docking.actions.DockingToolActions;
 import docking.dnd.GClipboard;
 import docking.framework.DockingApplicationConfiguration;
-import docking.menu.DockingToolbarButton;
+import docking.menu.DialogToolbarButton;
 import docking.widgets.MultiLineLabel;
 import docking.widgets.OptionDialog;
 import docking.widgets.filechooser.GhidraFileChooser;
 import docking.widgets.table.threaded.ThreadedTableModel;
-import docking.widgets.tree.*;
+import docking.widgets.tree.GTree;
+import docking.widgets.tree.GTreeNode;
 import generic.test.AbstractGenericTest;
 import generic.test.ConcurrentTestExceptionHandler;
 import generic.util.image.ImageUtils;
 import ghidra.GhidraTestApplicationLayout;
 import ghidra.framework.ApplicationConfiguration;
-import ghidra.util.*;
+import ghidra.util.ConsoleErrorDisplay;
+import ghidra.util.ErrorDisplay;
+import ghidra.util.Msg;
 import ghidra.util.exception.AssertException;
-import ghidra.util.exception.CancelledException;
 import ghidra.util.task.SwingUpdateManager;
-import ghidra.util.task.TaskMonitor;
 import ghidra.util.worker.Worker;
 import junit.framework.AssertionFailedError;
 import sun.awt.AppContext;
@@ -221,25 +268,9 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	}
 
 	public static Window waitForWindowByTitleContaining(String text) {
-		return waitForWindowByTitleContaining(null, text, DEFAULT_WAIT_TIMEOUT);
-	}
-
-	/**
-	 * Deprecated
-	 * @param parentWindow 
-	 * @param text 
-	 * @param timeoutMS 
-	 * @return window
-	 * @deprecated Instead call one of the methods that does not take a timeout
-	 *             (we are standardizing timeouts).  The timeouts passed to this method will
-	 *             be ignored in favor of the standard value.
-	 */
-	@Deprecated
-	public static Window waitForWindowByTitleContaining(Window parentWindow, String text,
-			int timeoutMS) {
 
 		// try at least one time
-		Window window = getWindowByTitleContaining(parentWindow, text);
+		Window window = getWindowByTitleContaining(null, text);
 		if (window != null) {
 			return window;// we found it...no waiting required
 		}
@@ -248,7 +279,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 		int timeout = DEFAULT_WAIT_TIMEOUT;
 		while (totalTime <= timeout) {
 
-			window = getWindowByTitleContaining(parentWindow, text);
+			window = getWindowByTitleContaining(null, text);
 			if (window != null) {
 				return window;
 			}
@@ -258,43 +289,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 		throw new AssertionFailedError(
 			"Timed-out waiting for window containg title '" + text + "'");
-	}
-
-	/**
-	 * Waits for a window with the given name.  If <tt>parentWindow</tt> is not null, then it
-	 * will be used to find subordinate windows.  If <tt>parentWindow</tt> is null, then all
-	 * existing frames will be searched.
-	 *
-	 * @param parentWindow The parent of the window for which to search, or null to search all
-	 *        open frames
-	 * @param title The title of the window for which to search
-	 * @param timeoutMS The timeout after which this method will wait no more
-	 * @return The window, if found, null otherwise.
-	 *
-	 * @deprecated Instead call one of the methods that does not take a timeout
-	 *             (we are standardizing timeouts).  The timeouts passed to this method will
-	 *             be ignored in favor of the standard value.
-	 */
-	@Deprecated
-	public static Window waitForWindow(Window parentWindow, String title, int timeoutMS) {
-
-		Window window = getWindowByTitle(parentWindow, title);
-		if (window != null) {
-			return window;// we found it...no waiting required
-		}
-
-		int totalTime = 0;
-		int timeout = DEFAULT_WAIT_TIMEOUT;
-		while (totalTime <= timeout) {
-
-			window = getWindowByTitle(parentWindow, title);
-			if (window != null) {
-				return window;
-			}
-
-			totalTime += sleep(DEFAULT_WAIT_DELAY);
-		}
-		throw new AssertionFailedError("Timed-out waiting for window with title '" + title + "'");
 	}
 
 	/**
@@ -367,7 +361,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * Check for and display message component text associated with
 	 * ErrLogDialog and OptionDialog windows.
 	 * @param w any window
-	 * @return the message string if one can be found; <tt>null</tt> otherwise
+	 * @return the message string if one can be found; <code>null</code> otherwise
 	 */
 	public static String checkMessageDisplay(Window w) {
 		Component c = findComponentByName(w, "MESSAGE-COMPONENT");
@@ -637,7 +631,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * Waits for the first window of the given class.
 	 *
 	 * @param ghidraClass The class of the dialog the user desires
-	 * @return The first occurrence of a dialog that extends the given <tt>ghirdraClass</tt>
+	 * @return The first occurrence of a dialog that extends the given <code>ghirdraClass</code>
 	 * @see #waitForDialogComponent(Window, Class, int)
 	 */
 	public static <T extends DialogComponentProvider> T waitForDialogComponent(
@@ -647,13 +641,13 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Waits for the first window of the given class.  This method assumes that the desired dialog
-	 * is parented by <tt>parentWindow</tt>.
+	 * is parented by <code>parentWindow</code>.
 	 *
 	 * @param parentWindow The parent of the desired dialog; may be null
 	 * @param clazz The class of the dialog the user desires
 	 * @param timeoutMS The max amount of time in milliseconds to wait for the requested dialog
 	 *        to appear.
-	 * @return The first occurrence of a dialog that extends the given <tt>ghirdraClass</tt>
+	 * @return The first occurrence of a dialog that extends the given <code>ghirdraClass</code>
 	 * @deprecated Instead call one of the methods that does not take a timeout
 	 *             (we are standardizing timeouts).  The timeouts passed to this method will
 	 *             be ignored in favor of the standard value.
@@ -751,7 +745,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Searches for the first occurrence of a {@link ComponentProvider} that is an instance of
-	 * the given <tt>providerClass</tt>.
+	 * the given <code>providerClass</code>.
 	 *
 	 * @param clazz The class of the ComponentProvider to locate
 	 * @return The component provider, or null if one cannot be found
@@ -781,10 +775,10 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Searches for the first occurrence of a {@link ComponentProvider} that is an instance of
-	 * the given <tt>providerClass</tt>.  This method will repeat the search every
+	 * the given <code>providerClass</code>.  This method will repeat the search every
 	 * {@link #DEFAULT_WAIT_DELAY} milliseconds
 	 * until the provider is found, or the maximum number of searches has been reached, where
-	 * <tt>maximum number of searches = MaxTimeMS / {@link #DEFAULT_WAIT_DELAY} </tt>
+	 * <code>maximum number of searches = MaxTimeMS / {@link #DEFAULT_WAIT_DELAY} </code>
 	 *
 	 * @param clazz The class of the ComponentProvider to locate
 	 * @return The component provider, or null if one cannot be found
@@ -870,9 +864,9 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * <p>
 	 * Note: this method assumes the given node is not a RootNode, but a child thereof
 	 *
-	 * @param node The <tt>Node</tt> instance that contains the desired <tt>ComponentProvider</tt>
+	 * @param node The <code>Node</code> instance that contains the desired <code>ComponentProvider</code>
 	 *        or other nodes.
-	 * @param providerClass The <tt>ComponentProvider</tt> class for which to search.
+	 * @param providerClass The <code>ComponentProvider</code> class for which to search.
 	 */
 	private static ComponentProvider getComponentProviderFromNode(Object node,
 			Class<? extends ComponentProvider> providerClass) {
@@ -909,10 +903,10 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Searches for the first occurrence of a {@link ComponentProvider} that is an instance of
-	 * the given <tt>providerClass</tt>.  This method will repeat the search every
+	 * the given <code>providerClass</code>.  This method will repeat the search every
 	 * {@link #DEFAULT_WAIT_DELAY} milliseconds
 	 * until the provider is found, or the maximum number of searches has been reached, where
-	 * <tt>maximum number of searches = MaxTimeMS / {@link #DEFAULT_WAIT_DELAY} </tt>
+	 * <code>maximum number of searches = MaxTimeMS / {@link #DEFAULT_WAIT_DELAY} </code>
 	 *
 	 * @param parentWindow The window that will become the parent window of the provider (this is
 	 *        typically the tool's frame).
@@ -1015,7 +1009,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Finds the toggle button with the given name inside of the given container and then
-	 * ensures that the selected state of the button matches <tt>selected</tt>.
+	 * ensures that the selected state of the button matches <code>selected</code>.
 	 * <p>
 	 * Note: this works for any instanceof {@link JToggleButton}, such as:
 	 * <ul>
@@ -1052,7 +1046,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	}
 
 	/**
-	 * Ensures that the selected state of the button matches <tt>selected</tt>.
+	 * Ensures that the selected state of the button matches <code>selected</code>.
 	 * <p>
 	 * Note: this works for most toggle button implementations which are derived from
 	 * AbstractButton and relay on {@link AbstractButton#isSelected()} and
@@ -1101,7 +1095,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the name to match
 	 * @return the matching actions; empty list if no matches
 	 */
-	public static Set<DockingActionIf> getActionsByName(DockingTool tool, String name) {
+	public static Set<DockingActionIf> getActionsByName(Tool tool, String name) {
 
 		Set<DockingActionIf> result = new HashSet<>();
 
@@ -1122,7 +1116,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the owner's name to match
 	 * @return the matching actions; empty list if no matches
 	 */
-	public static Set<DockingActionIf> getActionsByOwner(DockingTool tool, String name) {
+	public static Set<DockingActionIf> getActionsByOwner(Tool tool, String name) {
 		return tool.getDockingActionsByOwnerName(name);
 	}
 
@@ -1135,16 +1129,17 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the owner's name to match
 	 * @return the matching actions; empty list if no matches
 	 */
-	public static Set<DockingActionIf> getActionsByOwnerAndName(DockingTool tool, String owner,
+	public static Set<DockingActionIf> getActionsByOwnerAndName(Tool tool, String owner,
 			String name) {
 		Set<DockingActionIf> ownerActions = tool.getDockingActionsByOwnerName(owner);
-		return Sets.filter(ownerActions, action -> action.getName().equals(name));
+		return ownerActions.stream().filter(action -> action.getName().equals(name)).collect(
+			Collectors.toSet());
 	}
 
 	/**
 	 * Finds the singular tool action by the given name.  If more than one action exists with
 	 * that name, then an exception is thrown.  If you want more than one matching action,
-	 * the call {@link #getActionsByName(DockingTool, String)} instead.
+	 * the call {@link #getActionsByName(Tool, String)} instead.
 	 *
 	 * <P>Note: more specific test case subclasses provide other methods for finding actions
 	 * when you have an owner name (which is usually the plugin name).
@@ -1153,7 +1148,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the name to match
 	 * @return the matching action; null if no matching action can be found
 	 */
-	public static DockingActionIf getAction(DockingTool tool, String name) {
+	public static DockingActionIf getAction(Tool tool, String name) {
 
 		Set<DockingActionIf> actions = getActionsByName(tool, name);
 		if (actions.isEmpty()) {
@@ -1170,7 +1165,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	/**
 	 * Finds the action by the given owner name and action name.  
 	 * If you do not know the owner name, then use  
-	 * the call {@link #getActionsByName(DockingTool, String)} instead  (this will not include
+	 * the call {@link #getActionsByName(Tool, String)} instead  (this will not include
 	 * reserved system actions).
 	 * 
 	 * <P>Note: more specific test case subclasses provide other methods for finding actions 
@@ -1181,7 +1176,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the name to match
 	 * @return the matching action; null if no matching action can be found
 	 */
-	public static DockingActionIf getAction(DockingTool tool, String owner, String name) {
+	public static DockingActionIf getAction(Tool tool, String owner, String name) {
 		Set<DockingActionIf> actions = getActionsByOwnerAndName(tool, owner, name);
 		if (actions.isEmpty()) {
 			return null;
@@ -1190,7 +1185,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 		if (actions.size() > 1) {
 			// This shouldn't happen
 			throw new AssertionFailedError(
-				"Found more than one action for name '" + name + " (" + owner + ")'");
+				"Found more than one action for name '" + name + " (" + owner + ")'\n\t" + actions);
 		}
 
 		return CollectionUtils.any(actions);
@@ -1204,7 +1199,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @return the action
 	 */
 	public static DockingActionIf getLocalAction(ComponentProvider provider, String actionName) {
-		DockingTool tool = provider.getTool();
+		Tool tool = provider.getTool();
 		DockingToolActions toolActions = tool.getToolActions();
 		DockingActionIf action = toolActions.getLocalAction(provider, actionName);
 		return action;
@@ -1432,9 +1427,9 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 			if (element instanceof JButton) {
 
 				JButton button = (JButton) element;
-				if (button instanceof DockingToolbarButton) {
+				if (button instanceof DialogToolbarButton) {
 					DockingActionIf dockingAction =
-						((DockingToolbarButton) button).getDockingAction();
+						((DialogToolbarButton) button).getDockingAction();
 					if (dockingAction.getName().equals(name)) {
 						return button;
 					}
@@ -1565,7 +1560,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * <br>ABCDEFGHIJKLMNOPQRSTUVWXYZ
 	 * <br>abcdefghijklmnopqrstuvwxyz
 	 * <br>`1234567890-=[]\;',./
-	 * <br>~!@#$%^&*()_+{}|:"&lt&gt?
+	 * <br>{@literal ~!@#$%^&*()_+{}|:"<>?}
 	 * <br>
 	 * <br>It also handles '\n', '\t', and '\b'.
 	 *
@@ -1589,7 +1584,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * <br>ABCDEFGHIJKLMNOPQRSTUVWXYZ
 	 * <br>abcdefghijklmnopqrstuvwxyz
 	 * <br>`1234567890-=[]\;',./
-	 * <br>~!@#$%^&*()_+{}|:"&lt&gt?
+	 * <br>{@literal ~!@#$%^&*()_+{}|:"<>?}
 	 * <br>
 	 * <br>It also handles '\n', '\t', and '\b'.
 	 *
@@ -1719,6 +1714,21 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	}
 
 	/**
+	 * Fires a {@link KeyListener#keyPressed(KeyEvent)}, 
+	 * {@link KeyListener#keyTyped(KeyEvent)}
+	 * and {@link KeyListener#keyReleased(KeyEvent)} for the given key stroke
+	 * 
+	 * @param c the destination component
+	 * @param ks the key stroke
+	 */
+	public static void triggerKey(Component c, KeyStroke ks) {
+		int modifiers = ks.getModifiers();
+		char keyChar = ks.getKeyChar();
+		int keyCode = ks.getKeyCode();
+		triggerKey(c, modifiers, keyCode, keyChar);
+	}
+
+	/**
 	 * Fires a {@link KeyListener#keyPressed(KeyEvent)}, {@link KeyListener#keyTyped(KeyEvent)}
 	 * and {@link KeyListener#keyReleased(KeyEvent)} for the given key code and char.
 	 *
@@ -1755,7 +1765,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 			char updatedKeyChar = (keyChar == KeyEvent.CHAR_UNDEFINED) ? (char) keyCode : keyChar;
 			KeyEvent typedKE = new KeyEvent(c, KeyEvent.KEY_TYPED, System.currentTimeMillis(),
 				modifiers, KeyEvent.VK_UNDEFINED, updatedKeyChar);
-
 			consumer.accept(c, typedKE);
 		}
 
@@ -1767,7 +1776,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	private static void processEvent(Component c, KeyEvent e) {
 
 		runSwing(() -> {
-
 			if (TestKeyEventDispatcher.dispatchKeyEvent(e)) {
 				return; // already handled
 			}
@@ -1830,25 +1838,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	}
 
 	/**
-	 * Signals that the client expected the System Under Test (SUT) to report errors.  Use this
-	 * when you wish to verify that errors are reported and you do not want those errors to
-	 * fail the test.  The default value for this setting is false, which means that any
-	 * errors reported will fail the running test.
-	 *
-	 * @param expected true if errors are expected.
-	 */
-	public static void setErrorsExpected(boolean expected) {
-		if (expected) {
-			Msg.error(AbstractDockingTest.class, ">>>>>>>>>>>>>>>> Expected Exception");
-			ConcurrentTestExceptionHandler.disable();
-		}
-		else {
-			Msg.error(AbstractDockingTest.class, "<<<<<<<<<<<<<<<< End Expected Exception");
-			ConcurrentTestExceptionHandler.enable();
-		}
-	}
-
-	/**
 	 * Turns off the gui displays for errors.  This does not change the "isUseErrorGUI()" value for
 	 * other tests in the TestCase.
 	 */
@@ -1863,7 +1852,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the name of the provider to show
 	 * @return the newly shown provider
 	 */
-	public ComponentProvider showProvider(DockingTool tool, String name) {
+	public ComponentProvider showProvider(Tool tool, String name) {
 		ComponentProvider provider = tool.getComponentProvider(name);
 		tool.showComponentProvider(provider, true);
 		return provider;
@@ -1871,7 +1860,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	/**
 	 * Closes the given provider.  You could just call
-	 * {@link DockingTool#removeComponentProvider(ComponentProvider)}, but some providers have extra
+	 * {@link Tool#removeComponentProvider(ComponentProvider)}, but some providers have extra
 	 * logic that happens when {@link ComponentProvider#closeComponent()} is called.   This will
 	 * likely change in the future.
 	 *
@@ -2072,7 +2061,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	}
 
 	public static GTreeNode getNode(GTree tree, String... path) {
-		GTreeRootNode rootNode = tree.getRootNode();
+		GTreeNode rootNode = tree.getModelRoot();
 		String rootName = path[0];
 		if (!rootNode.getName().equals(rootName)) {
 			throw new RuntimeException(
@@ -2123,9 +2112,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 
 	private static void doWaitForTree(GTree gTree) {
 
-		// TODO this wait algorithm shouldn't need this call
-		// submitTaskToGTreeQueue(gTree);
-
 		waitForSwing();
 		boolean didWait = false;
 		int waitTime = 0;
@@ -2148,25 +2134,6 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 			// again' approach is an effort to catch update calls that can be schedule by actions
 			// from the Swing thread, which the test thread does not handle flawlessly.
 			waitForTree(gTree);
-		}
-	}
-
-	/**
-	 * Create a task to be put onto the GTree queue.  This ensures that once the task is processed
-	 * that any previously schedule tasks will have been run.
-	 */
-	@SuppressWarnings("unused") // TODO leaving this for a bit, in case we need to put it back
-	private static void submitTaskToGTreeQueue(GTree gTree) {
-		GTreeFlagTask flagTask = new GTreeFlagTask(gTree);
-		gTree.runTask(flagTask);
-
-		while (!flagTask.hasRun()) {
-			try {
-				Thread.sleep(DEFAULT_WAIT_DELAY);
-			}
-			catch (Exception e) {
-				// who cares?
-			}
 		}
 	}
 
@@ -2221,7 +2188,7 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	 * @param name the file name suffix
 	 * @throws Exception if there is any issue capturing the component
 	 */
-	public void capture(JComponent c, String name) throws Exception {
+	public void capture(Component c, String name) throws Exception {
 
 		// old way of grabbing images--still need this if you want to capture a window's
 		// decorations
@@ -2310,27 +2277,5 @@ public abstract class AbstractDockingTest extends AbstractGenericTest {
 	public static void writeImage(Image image, File imageFile) throws IOException {
 		ImageUtils.writeFile(image, imageFile);
 		Msg.info(AbstractDockingTest.class, "Wrote image to " + imageFile.getCanonicalPath());
-	}
-
-//==================================================================================================
-// Inner Classes
-//==================================================================================================
-
-	private static class GTreeFlagTask extends GTreeTask {
-
-		protected GTreeFlagTask(GTree tree) {
-			super(tree);
-		}
-
-		private volatile boolean hasRun;
-
-		@Override
-		public void run(TaskMonitor monitor) throws CancelledException {
-			hasRun = true;
-		}
-
-		boolean hasRun() {
-			return hasRun;
-		}
 	}
 }

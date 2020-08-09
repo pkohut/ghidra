@@ -22,8 +22,6 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-import javax.swing.JFrame;
-
 import org.jdom.Element;
 
 import docking.ComponentProvider;
@@ -37,6 +35,7 @@ import ghidra.app.events.OpenProgramPluginEvent;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.app.plugin.core.progmgr.ProgramManagerPlugin;
 import ghidra.app.plugin.core.script.GhidraScriptMgrPlugin;
+import ghidra.app.script.GhidraScript;
 import ghidra.app.script.JavaScriptProvider;
 import ghidra.app.services.ProgramManager;
 import ghidra.base.project.GhidraProject;
@@ -69,7 +68,7 @@ public class TestEnv {
 
 	/**
 	 * Used to perform emergency cleanup.  Tests are expected to call {@link #dispose()} in
-	 * their <tt>tearDown</tt> method.  This is here to catch the case where the is some fatal
+	 * their <code>tearDown</code> method.  This is here to catch the case where the is some fatal
 	 * error that prevents that from taking place.
 	 */
 	private static Set<TestEnv> instances = new HashSet<>();
@@ -332,6 +331,7 @@ public class TestEnv {
 	 * <P>This method is considered sub-standard and users should prefer instead 
 	 * {@link #launchDefaultTool()} or {@link #launchDefaultTool(Program)}.
 	 * 
+	 * @param p the program
 	 * @return the newly shown tool
 	 */
 	public PluginTool showTool(Program p) {
@@ -357,20 +357,19 @@ public class TestEnv {
 
 	/**
 	 * Waits for the first window of the given class.  This method is the same as
-	 * {@link #waitForDialogComponent(Window, Class, int)} with the exception that the parent
+	 * {@link #waitForDialogComponent(Class, int)} with the exception that the parent
 	 * window is assumed to be this instance's tool frame.
 	 *
 	 * @param ghidraClass The class of the dialog the user desires
 	 * @param maxTimeMS The max amount of time in milliseconds to wait for the requested dialog
 	 *        to appear.
-	 * @return The first occurrence of a dialog that extends the given <tt>ghirdraClass</tt>
+	 * @return The first occurrence of a dialog that extends the given <code>ghirdraClass</code>
 	 * @deprecated use instead {@link AbstractDockingTest#waitForDialogComponent(Class)}
 	 */
 	@Deprecated
 	public <T extends DialogComponentProvider> T waitForDialogComponent(Class<T> ghidraClass,
 			int maxTimeMS) {
-		JFrame frame = lazyTool().getToolFrame();
-		return AbstractDockingTest.waitForDialogComponent(frame, ghidraClass, maxTimeMS);
+		return AbstractDockingTest.waitForDialogComponent(ghidraClass);
 	}
 
 	private static GhidraProject createGhidraTestProject(String projectName) throws IOException {
@@ -381,7 +380,11 @@ public class TestEnv {
 		deleteSavedFrontEndTool();
 
 		String projectDirectoryName = AbstractGTest.getTestDirectoryPath();
-		return GhidraProject.createProject(projectDirectoryName, projectName, true);
+		GhidraProject gp = GhidraProject.createProject(projectDirectoryName, projectName, true);
+
+		installDefaultTool(gp);
+
+		return gp;
 	}
 
 	private static void deleteOldTestTools() {
@@ -397,6 +400,19 @@ public class TestEnv {
 		if (frontEndFile.exists()) {
 			frontEndFile.delete();
 		}
+	}
+
+	private static void installDefaultTool(GhidraProject gp) {
+		// 
+		// Unusual Code Alert: The default tool is not always found in the testing environment,  
+		// depending upon where the test lives.   This code maps the test tool to that tool name
+		// so that tests will have the default tool as needed.
+		// 
+		Project project = gp.getProject();
+		ToolChest toolChest = project.getLocalToolChest();
+		ToolTemplate template = getToolTemplate(AbstractGenericTest.DEFAULT_TEST_TOOL_NAME);
+		template.setName(AbstractGenericTest.DEFAULT_TOOL_NAME);
+		AbstractGenericTest.runSwing(() -> toolChest.replaceToolTemplate(template));
 	}
 
 	private void initializeSimpleTool() {
@@ -465,7 +481,8 @@ public class TestEnv {
 
 	/**
 	 * This method differs from {@link #launchDefaultTool()} in that this method does not set the
-	 * <tt>tool</tt> variable in of this <tt>TestEnv</tt> instance.
+	 * <code>tool</code> variable in of this <code>TestEnv</code> instance.
+	 * @return the tool
 	 */
 	public PluginTool createDefaultTool() {
 		PluginTool newTool = launchDefaultToolByName(AbstractGenericTest.DEFAULT_TEST_TOOL_NAME);
@@ -497,15 +514,14 @@ public class TestEnv {
 		return tool;
 	}
 
-	protected PluginTool launchDefaultToolByName(final String toolName) {
-		AtomicReference<PluginTool> ref = new AtomicReference<>();
-		AbstractGenericTest.runSwing(() -> {
+	protected PluginTool launchDefaultToolByName(String toolName) {
 
-			ToolTemplate toolTemplate =
-				ToolUtils.readToolTemplate("defaultTools/" + toolName + ".tool");
+		return AbstractGenericTest.runSwing(() -> {
+
+			ToolTemplate toolTemplate = getToolTemplate(toolName);
 			if (toolTemplate == null) {
 				Msg.debug(this, "Unable to find tool: " + toolName);
-				return;
+				return null;
 			}
 
 			boolean wasErrorGUIEnabled = AbstractDockingTest.isUseErrorGUI();
@@ -515,41 +531,58 @@ public class TestEnv {
 			Project project = frontEndToolInstance.getProject();
 			ToolManager toolManager = project.getToolManager();
 			Workspace workspace = toolManager.getActiveWorkspace();
-			ref.set((PluginTool) workspace.runTool(toolTemplate));
 
 			AbstractDockingTest.setErrorGUIEnabled(wasErrorGUIEnabled);
+			return (PluginTool) workspace.runTool(toolTemplate);
 		});
-		return ref.get();
 	}
 
-	public ScriptTaskListener runScript(File script) throws PluginException {
+	private static ToolTemplate getToolTemplate(String toolName) {
 
+		return AbstractGenericTest.runSwing(() -> {
+			ToolTemplate toolTemplate =
+				ToolUtils.readToolTemplate("defaultTools/" + toolName + ToolUtils.TOOL_EXTENSION);
+			if (toolTemplate == null) {
+				Msg.debug(TestEnv.class, "Unable to find tool: " + toolName);
+				return null;
+			}
+			return toolTemplate;
+		});
+	}
+
+	public ScriptTaskListener runScript(File scriptFile) throws PluginException {
+		GhidraScriptMgrPlugin scriptManagerPlugin = getPlugin(GhidraScriptMgrPlugin.class);
+		if (scriptManagerPlugin == null) {
+			lazyTool().addPlugin(GhidraScriptMgrPlugin.class.getName());
+			scriptManagerPlugin = getPlugin(GhidraScriptMgrPlugin.class);
+		}
+		
 		JavaScriptProvider scriptProvider = new JavaScriptProvider();
 		PrintWriter writer = new PrintWriter(System.out);
-		ResourceFile resourceFile = new ResourceFile(script);
-		Boolean result = (Boolean) AbstractGenericTest.invokeInstanceMethod("compile",
-			scriptProvider, new Class<?>[] { ResourceFile.class, PrintWriter.class },
-			new Object[] { resourceFile, writer });
-
-		if (!result) {
+		ResourceFile resourceFile = new ResourceFile(scriptFile);
+		GhidraScript script=null;
+		try {
+			script=scriptProvider.getScriptInstance(resourceFile, writer);
+		}
+		catch (ClassNotFoundException | InstantiationException | IllegalAccessException e) {
+			e.printStackTrace();
+			
+		}
+		if (script==null) {
 			writer.flush();
-			throw new RuntimeException("Failed to compile script " + script.getAbsolutePath());
+			throw new RuntimeException("Failed to compile script " + scriptFile.getAbsolutePath());
 		}
 
-		GhidraScriptMgrPlugin sm = getPlugin(GhidraScriptMgrPlugin.class);
-		if (sm == null) {
-			lazyTool().addPlugin(GhidraScriptMgrPlugin.class.getName());
-			sm = getPlugin(GhidraScriptMgrPlugin.class);
-		}
 
-		String scriptName = script.getName();
+		String scriptName = scriptFile.getName();
 		ScriptTaskListener listener = new ScriptTaskListener(scriptName);
-		sm.runScript(scriptName, listener);
+		scriptManagerPlugin.runScript(scriptName, listener);
 		return listener;
 	}
 
 	/**
 	 * Returns GhidraProject associated with this environment
+	 * @return the project
 	 */
 	public GhidraProject getGhidraProject() {
 		return gp;
@@ -559,6 +592,7 @@ public class TestEnv {
 	 * A convenience method to close and then reopen the default project created by this TestEnv
 	 * instance.  This will not delete the project between opening and closing and will restore
 	 * the project to its previous state.
+	 * @throws IOException if any exception occurs while saving and reopening
 	 */
 	public void closeAndReopenProject() throws IOException {
 		gp.setDeleteOnClose(false);
@@ -579,9 +613,6 @@ public class TestEnv {
 		return gp.getProjectManager();
 	}
 
-	/**
-	 * Returns Project associated with this environment
-	 */
 	public Project getProject() {
 		return gp.getProject();
 	}
@@ -614,7 +645,7 @@ public class TestEnv {
 	 * NOTE: This array will not contain any of the TestTools!
 	 * @return an array of tools spawned by the Ghidra environment
 	 */
-	public Tool[] getGhidraCreatedTools() {
+	public PluginTool[] getGhidraCreatedTools() {
 		return gp.getProject().getToolManager().getRunningTools();
 	}
 
@@ -646,6 +677,8 @@ public class TestEnv {
 	 * the only reason to use this method vice openProgram().
 	 *
 	 * @param programName the name of the program zip file without the ".gzf" extension.
+	 * @return the restored domain file
+	 * @throws FileNotFoundException if the program file cannot be found
 	 */
 	public DomainFile restoreProgram(String programName) throws FileNotFoundException {
 		DomainFile df = programManager.addProgramToProject(getProject(), programName);
@@ -674,12 +707,12 @@ public class TestEnv {
 	 * @param relativePathName This should be a pathname relative to the "test_resources/testdata"
 	 * 		  director or relative to the "typeinfo" directory. The name should
 	 *        include the ".gdt" suffix.
-	 * @param domainFolder the folder in the test project where the archive should be created.
-	 * @param monitor monitor for canceling this restore.
+	 * @param domainFolder the folder in the test project where the archive should be created
 	 * @return the domain file  that was created in the project
+	 * @throws Exception if an exception occurs
 	 */
 	public DomainFile restoreDataTypeArchive(String relativePathName, DomainFolder domainFolder)
-			throws InvalidNameException, IOException, VersionException {
+			throws Exception {
 
 		File gdtFile;
 		try {
@@ -738,10 +771,10 @@ public class TestEnv {
 	 * @param program program object
 	 * @param replace if true any existing cached database with the same name will be replaced
 	 * @param monitor task monitor
-	 * @throws DuplicateNameException if already cached
+	 * @throws Exception if already cached
 	 */
 	public void saveToCache(String progName, ProgramDB program, boolean replace,
-			TaskMonitor monitor) throws IOException, DuplicateNameException, CancelledException {
+			TaskMonitor monitor) throws Exception {
 
 		programManager.saveToCache(progName, program, replace, monitor);
 	}
@@ -826,7 +859,8 @@ public class TestEnv {
 	 * Launches a tool of the given name using the given domain file.
 	 * <p>
 	 * Note: the tool returned will have auto save disabled by default.
-	 *
+	 * 
+	 * @param toolName the tool's name
 	 * @return the tool that is launched
 	 */
 	public PluginTool launchTool(String toolName) {
@@ -852,7 +886,7 @@ public class TestEnv {
 
 			Project project = frontEndToolInstance.getProject();
 			ToolServices toolServices = project.getToolServices();
-			PluginTool newTool = (PluginTool) toolServices.launchTool(toolName, null);
+			PluginTool newTool = toolServices.launchTool(toolName, null);
 			if (newTool == null) {
 				// couldn't find the tool in the workspace...check the test area
 				newTool = launchDefaultToolByName(toolName);
@@ -1216,5 +1250,7 @@ public class TestEnv {
 
 		DefaultProjectManager pm = gp.getProjectManager();
 		pm.addDefaultTools(tc);
+
+		installDefaultTool(gp);
 	}
 }

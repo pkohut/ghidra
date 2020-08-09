@@ -18,15 +18,13 @@ package ghidra.framework.main;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.event.MouseEvent;
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.util.*;
 
 import javax.swing.*;
 import javax.swing.border.BevelBorder;
-
-import org.jdom.Document;
-import org.jdom.output.XMLOutputter;
 
 import docking.*;
 import docking.action.DockingAction;
@@ -52,8 +50,8 @@ import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.framework.preferences.Preferences;
 import ghidra.framework.remote.User;
 import ghidra.util.*;
-import ghidra.util.filechooser.*;
-import ghidra.util.xml.GenericXMLOutputter;
+import ghidra.util.filechooser.GhidraFileChooserModel;
+import ghidra.util.filechooser.GhidraFileFilter;
 import resources.ResourceManager;
 
 /**
@@ -102,8 +100,6 @@ public class FrontEndPlugin extends Plugin
 	 */
 	private LogPanel statusPanel;
 	private String projectName;
-
-	private GhidraFileChooser exportFileChooser;
 
 	private FileActionManager fileActionManager;
 	private ProjectActionManager projectActionManager;
@@ -213,34 +209,27 @@ public class FrontEndPlugin extends Plugin
 
 	private void createActions() {
 		String owner = getName();
+
 		String groupName = "Cut/copy/paste/new1";
+		newFolderAction = new FrontEndProjectDataNewFolderAction(owner, groupName);
 
-		newFolderAction = new ProjectDataNewFolderAction(owner, groupName);
 		groupName = "Cut/copy/paste/new2";
-
 		cutAction = new ProjectDataCutAction(owner, groupName);
-
 		clearCutAction = new ClearCutAction(owner);
-
 		copyAction = new ProjectDataCopyAction(owner, groupName);
-
 		pasteAction = new ProjectDataPasteAction(owner, groupName);
 
 		groupName = "Delete/Rename";
 		renameAction = new ProjectDataRenameAction(owner, groupName);
-
 		deleteAction = new ProjectDataDeleteAction(owner, groupName);
-
 		openAction = new ProjectDataOpenDefaultToolAction(owner, "Open");
 
 		groupName = "Expand/Collapse";
-		expandAction = new ProjectDataExpandAction(owner, groupName);
-
-		collapseAction = new ProjectDataCollapseAction(owner, groupName);
+		expandAction = new FrontEndProjectDataExpandAction(owner, groupName);
+		collapseAction = new FrontEndProjectDataCollapseAction(owner, groupName);
 
 		groupName = "Select/Toggle";
 		selectAction = new ProjectDataSelectAction(owner, groupName);
-
 		readOnlyAction = new ProjectDataReadOnlyAction(owner, groupName);
 
 		groupName = "XRefresh";
@@ -302,39 +291,10 @@ public class FrontEndPlugin extends Plugin
 		return (FrontEndTool) tool;
 	}
 
-	/**
-	 * Get the component for this plugin.
-	 *
-	 * NOTE: made plugin for JUnits...
-	 */
 	public JComponent getComponent() {
 		return mainGuiPanel;
 	}
 
-	/**
-	 * Get the descriptive name for this plugin.
-	 */
-	public static String getDescriptiveName() {
-		return "Front End";
-	}
-
-	/**
-	 * Get the plugin's description.
-	 */
-	public static String getDescription() {
-		return "Front End Components for Ghidra";
-	}
-
-	/**
-	 * Get the category where this plugin belongs.
-	 */
-	public static String getCategory() {
-		return "FrontEnd";
-	}
-
-	/* (non Javadoc)
-	 * @see ghidra.framework.client.RemoteAdapterListener#connectionStateChanged(java.lang.Object)
-	 */
 	@Override
 	public void connectionStateChanged(final Object adapter) {
 		if (activeProject != null) {
@@ -506,8 +466,11 @@ public class FrontEndPlugin extends Plugin
 	 * general project utility that brings up a file chooser for
 	 * the user to specify a directory and filename that are used
 	 * for the Project location and name
-	 * @param create The mode for the fileChooser to be in: create or open existing
-	 * @param approveButtonText The label for the "Open" button on the file chooser
+	 * 
+	 * @param fileChooser the chooser used to pick the project
+	 * @param mode read-only or not
+	 * @param preferenceName the preference property name used to save the last opened project
+	 * @return the project locator for the opened project 
 	 */
 	ProjectLocator chooseProject(GhidraFileChooser fileChooser, String mode,
 			String preferenceName) {
@@ -537,7 +500,7 @@ public class FrontEndPlugin extends Plugin
 						"Cannot open '" + file.getName() + "' as a Ghidra Project");
 					continue;
 				}
-				if (!NamingUtilities.isValidName(filename)) {
+				if (!NamingUtilities.isValidProjectName(filename)) {
 					Msg.showError(getClass(), tool.getToolFrame(), "Invalid Project Name",
 						filename + " is not a valid project name");
 					continue;
@@ -632,24 +595,10 @@ public class FrontEndPlugin extends Plugin
 		return actionContext;
 	}
 
-	/**
-	 * designates whether the user interface is showing or hidden
-	 * @return true if showing; false if not showing
-	 */
-	final boolean isGuiShowing() {
-		return mainGuiPanel.isShowing();
-	}
-
-	/**
-	 * Get the tool button transferable.
-	 */
 	ToolButtonTransferable getToolButtonTransferable() {
 		return toolButtonTransferable;
 	}
 
-	/**
-	 * Set the tool button transferable.
-	 */
 	void setToolButtonTransferable(ToolButtonTransferable t) {
 		if (t == null && toolButtonTransferable != null) {
 			toolButtonTransferable.clearTransferData();
@@ -685,89 +634,34 @@ public class FrontEndPlugin extends Plugin
 	 * @param msgSource source of status message for successful export
 	 */
 	void exportToolConfig(ToolTemplate template, String msgSource) {
+
+		ToolTemplate updatedTeplate = getUpToDateTemplate(template);
+		ToolServices services = activeProject.getToolServices();
+
 		try {
-			GhidraFileChooser fileChooser = getFileChooser(template);
-
-			File selectedFile = fileChooser.getSelectedFile(true);
-			if (selectedFile == null) { // user cancelled
-				return;
+			File savedFile = services.exportTool(updatedTeplate);
+			if (savedFile != null) {
+				Msg.info(this, msgSource + ": Successfully exported " + updatedTeplate.getName() +
+					" to " + savedFile.getAbsolutePath());
 			}
-
-			Preferences.setProperty(Preferences.LAST_TOOL_EXPORT_DIRECTORY,
-				selectedFile.getParent());
-			if (selectedFile.exists()) {
-				int result = OptionDialog.showOptionDialog(tool.getToolFrame(), "Overwrite?",
-					"File exists. Do you want to overwrite?", "Yes", "No",
-					OptionDialog.QUESTION_MESSAGE);
-
-				// the user chose not to overwrite the file, ask them to choose again
-				// if the user hit yes, then it will be handled below
-				if (result == OptionDialog.OPTION_TWO) {
-					exportToolConfig(template, msgSource);
-					return;
-				}
-			}
-
-			exportToolTemplate(selectedFile, template, msgSource);
-		}
-		catch (IOException e) {
-			Msg.showError(this, tool.getToolFrame(), "Error Exporting Tool",
-				"Error exporting tool: " + e.getMessage(), e);
 		}
 		catch (Exception e) {
-			Msg.showError(this, null, "Error", "Error exporting tool", e);
+			Msg.showError(this, null, "Error Exporting Tool", "Error exporting tool tool", e);
 		}
 	}
 
-	private GhidraFileChooser getFileChooser(ToolTemplate template) {
-		if (exportFileChooser == null) {
-			exportFileChooser = new GhidraFileChooser(tool.getToolFrame());
-			exportFileChooser.setFileFilter(
-				new ExtensionFileFilter(ToolConstants.TOOL_HELP_TOPIC, "Tools"));
-			exportFileChooser.setApproveButtonText("Export");
+	private ToolTemplate getUpToDateTemplate(ToolTemplate template) {
 
-			// always prefer the last export directory...
-			String exportDir = Preferences.getProperty(Preferences.LAST_TOOL_EXPORT_DIRECTORY);
-			if (exportDir != null) {
-				exportFileChooser.setCurrentDirectory(new File(exportDir));
-			}
-			else {
-				// ...then try the import directory
-				String importDir = Preferences.getProperty(Preferences.LAST_TOOL_IMPORT_DIRECTORY);
-				if (importDir != null) {
-					exportFileChooser.setCurrentDirectory(new File(importDir));
-				}
+		ToolManager toolManager = activeProject.getToolManager();
+		PluginTool[] runningTools = toolManager.getRunningTools();
+		String templateName = template.getName();
+		for (PluginTool runningTool : runningTools) {
+			if (runningTool.getName().equals(templateName)) {
+				return runningTool.getToolTemplate(true);
 			}
 		}
 
-		exportFileChooser.setTitle("Export " + template.getName());
-		return exportFileChooser;
-	}
-
-	/**
-	 * Export the tool.
-	 */
-	private void exportToolTemplate(File location, ToolTemplate template, String msgSource)
-			throws FileNotFoundException, IOException {
-
-		String filename = location.getName();
-		if (filename.endsWith(".tool")) {
-			filename = filename.substring(0, filename.length() - 5);
-		}
-
-		FileOutputStream f =
-			new FileOutputStream(location.getParent() + File.separator + filename + ".tool");
-		BufferedOutputStream bf = new BufferedOutputStream(f);
-
-		Document doc = new Document(template.saveToXml());
-
-		XMLOutputter xmlout = new GenericXMLOutputter();
-		xmlout.output(doc, bf);
-
-		bf.close();
-
-		Msg.info(this, msgSource + ": Successfully exported " + template.getName() + " to " +
-			location.getAbsolutePath());
+		return template;
 	}
 
 	private void updateConnectionPanel(Project project) {
@@ -1059,8 +953,8 @@ public class FrontEndPlugin extends Plugin
 
 			private boolean isToolRunning(ToolTemplate template) {
 				ToolManager toolManager = activeProject.getToolManager();
-				Tool[] runningTools = toolManager.getRunningTools();
-				for (Tool runningTool : runningTools) {
+				PluginTool[] runningTools = toolManager.getRunningTools();
+				for (PluginTool runningTool : runningTools) {
 					if (runningTool.getToolName().equals(template.getName())) {
 						return true;
 					}
@@ -1081,14 +975,14 @@ public class FrontEndPlugin extends Plugin
 			@Override
 			public void actionPerformed(ActionContext context) {
 				ToolButton tb = (ToolButton) context.getContextObject();
-				PluginTool pluginTool = (PluginTool) tb.getRunningTool();
+				PluginTool pluginTool = tb.getRunningTool();
 				pluginTool.showConfig(true, false);
 			}
 
 			@Override
 			boolean isEnabledForContext(ToolButton toolButton) {
 				if (toolButton.isRunningTool()) {
-					PluginTool pluginTool = (PluginTool) toolButton.getRunningTool();
+					PluginTool pluginTool = toolButton.getRunningTool();
 					return pluginTool.isConfigurable();
 				}
 				return false;
@@ -1108,9 +1002,6 @@ public class FrontEndPlugin extends Plugin
 		tool.addLocalAction(frontEndProvider, propertiesAction);
 	}
 
-	/**
-	 * Delete the tool template from the tool chest.
-	 */
 	private void delete(String toolName) {
 		if (!confirmDelete(toolName + " from your local tool chest?")) {
 			return;
@@ -1148,17 +1039,11 @@ public class FrontEndPlugin extends Plugin
 		}
 	}
 
-	/**
-	 * @see ghidra.framework.main.FrontEndService#addProjectListener(ghidra.framework.model.ProjectListener)
-	 */
 	@Override
 	public void addProjectListener(ProjectListener l) {
 		((FrontEndTool) tool).addProjectListener(l);
 	}
 
-	/**
-	 * @see ghidra.framework.main.FrontEndService#removeProjectListener(ghidra.framework.model.ProjectListener)
-	 */
 	@Override
 	public void removeProjectListener(ProjectListener l) {
 		if (tool != null) { // tool is null when we've been disposed

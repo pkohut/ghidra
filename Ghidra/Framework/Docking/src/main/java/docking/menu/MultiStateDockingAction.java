@@ -22,7 +22,8 @@ import java.util.List;
 import javax.swing.Icon;
 import javax.swing.JButton;
 
-import docking.*;
+import docking.ActionContext;
+import docking.DockingWindowManager;
 import docking.action.*;
 import docking.widgets.EventTrigger;
 import ghidra.util.HelpLocation;
@@ -99,9 +100,9 @@ public abstract class MultiStateDockingAction<T> extends DockingAction {
 	public abstract void actionStateChanged(ActionState<T> newActionState, EventTrigger trigger);
 
 	/**
-	 * If <tt>doPerformAction</tt> is <tt>true</tt>, then, when the user clicks the
+	 * If <code>doPerformAction</code> is <code>true</code>, then, when the user clicks the
 	 * button and not the drop-down arrow, the {@link #doActionPerformed(ActionContext)}
-	 * method will be called.  If <tt>doPerformAction</tt> is <tt>false</tt>, then, when
+	 * method will be called.  If <code>doPerformAction</code> is <code>false</code>, then, when
 	 * the user clicks the button and not the drop-down arrow, the popup menu will be shown, just
 	 * as if the user had clicked the drop-down arrow.
 	 * <p>
@@ -148,11 +149,13 @@ public abstract class MultiStateDockingAction<T> extends DockingAction {
 
 	private ActionContext getActionContext() {
 		DockingWindowManager manager = DockingWindowManager.getActiveInstance();
-		ComponentProvider provider = manager.getActiveComponentProvider();
-		ActionContext localContext = provider == null ? null : provider.getActionContext(null);
-		final ActionContext actionContext =
-			localContext == null ? manager.getGlobalContext() : localContext;
-		return actionContext;
+
+		ActionContext context = manager.getActionContext(this);
+
+		if (context == null) {
+			context = new ActionContext();
+		}
+		return context;
 	}
 
 	protected List<DockingActionIf> getStateActions() {
@@ -232,7 +235,7 @@ public abstract class MultiStateDockingAction<T> extends DockingAction {
 		ToolBarData tbd = getToolBarData();
 		tbd.setIcon(getIcon(actionState));
 
-		setDescription(getTooTipText());
+		setDescription(getToolTipText());
 		actionStateChanged(actionState, trigger);
 	}
 
@@ -285,7 +288,7 @@ public abstract class MultiStateDockingAction<T> extends DockingAction {
 		throw new UnsupportedOperationException();
 	}
 
-	public String getTooTipText() {
+	public String getToolTipText() {
 		return getName() + ": " + getCurrentState().getName();
 	}
 

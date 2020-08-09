@@ -82,8 +82,9 @@ class LoadPdbTask extends Task {
 		}
 
 		try {
-			AutoAnalysisManager.getAnalysisManager(program).scheduleWorker(worker, null, true,
-				monitor);
+			AutoAnalysisManager.getAnalysisManager(program)
+					.scheduleWorker(worker, null, true,
+						monitor);
 		}
 		catch (InterruptedException | CancelledException e1) {
 			// ignore
@@ -107,7 +108,7 @@ class LoadPdbTask extends Task {
 			Msg.showError(getClass(), null, "Load PDB Failed", message, t);
 		}
 
-		if (log.getMsgCount() > 0) {
+		if (log.hasMessages()) {
 			MultiLineMessageDialog dialog = new MultiLineMessageDialog("Load PDB File",
 				"There were warnings/errors loading the PDB file.", log.toString(),
 				MultiLineMessageDialog.WARNING_MESSAGE, false);
@@ -117,7 +118,7 @@ class LoadPdbTask extends Task {
 
 	private void analyzeSymbols(TaskMonitor monitor, MessageLog log) {
 
-		DemanglerAnalyzer demanglerAnalyzer = new DemanglerAnalyzer();
+		MicrosoftDemanglerAnalyzer demanglerAnalyzer = new MicrosoftDemanglerAnalyzer();
 		String analyzerName = demanglerAnalyzer.getName();
 
 		Options analysisProperties = program.getOptions(Program.ANALYSIS_PROPERTIES);

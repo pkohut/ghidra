@@ -15,15 +15,14 @@
  */
 package ghidra.framework.plugintool;
 
-import static ghidra.framework.model.ToolTemplate.TOOL_INSTANCE_NAME_XML_NAME;
-import static ghidra.framework.model.ToolTemplate.TOOL_NAME_XML_NAME;
+import static ghidra.framework.model.ToolTemplate.*;
 
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
+import java.util.*;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.swing.ImageIcon;
@@ -42,6 +41,7 @@ import docking.help.Help;
 import docking.help.HelpService;
 import docking.tool.ToolConstants;
 import docking.tool.util.DockingToolConstants;
+import docking.util.image.ToolIconURL;
 import docking.widgets.OptionDialog;
 import ghidra.framework.OperatingSystem;
 import ghidra.framework.Platform;
@@ -56,10 +56,8 @@ import ghidra.framework.plugintool.dialog.ManagePluginsDialog;
 import ghidra.framework.plugintool.mgr.*;
 import ghidra.framework.plugintool.util.*;
 import ghidra.framework.project.ProjectDataService;
-import ghidra.framework.project.tool.ToolIconURL;
 import ghidra.util.*;
-import ghidra.util.task.Task;
-import ghidra.util.task.TaskLauncher;
+import ghidra.util.task.*;
 
 /**
  * Base class that is a container to manage plugins and their actions, and to coordinate the 
@@ -75,7 +73,24 @@ import ghidra.util.task.TaskLauncher;
  * <p>The PluginTool also manages tasks that run in the background, and options used by the plugins.
  *
  */
-public abstract class PluginTool extends AbstractDockingTool implements Tool, ServiceProvider {
+public abstract class PluginTool extends AbstractDockingTool {
+
+	/**
+	 * Name of the property for the tool name.
+	 */
+	public final static String TOOL_NAME_PROPERTY = "ToolName";
+	/**
+	 * Name of the property for the tool icon.
+	 */
+	public final static String ICON_PROPERTY_NAME = "Icon";
+	/**
+	 * Name of the property for the description of the tool.
+	 */
+	public final static String DESCRIPTION_PROPERTY_NAME = "Description";
+	/**
+	 * Name of the property for the number of plugins the tool has.
+	 */
+	public final static String PLUGIN_COUNT_PROPERTY_NAME = "PluginCount";
 
 	private static final String DOCKING_WINDOWS_ON_TOP = "Docking Windows On Top";
 
@@ -89,12 +104,13 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	private String subTitle;
 
 	private ServiceManager serviceMgr;
-	private ToolTaskManager taskMgr;
 	private OptionsManager optionsMgr;
 	private PluginManager pluginMgr;
 	private EventManager eventMgr;
 	private DialogManager dialogMgr;
 	private PropertyChangeSupport propertyChangeMgr;
+	private ToolTaskManager taskMgr;
+	private Set<TaskListener> executingTaskListeners = Collections.synchronizedSet(new HashSet<>());
 
 	private OptionsChangeListener optionsListener = new ToolOptionsListener();
 	protected ManagePluginsDialog manageDialog;
@@ -102,7 +118,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 	protected ToolIconURL iconURL = new ToolIconURL("view_detailed.png");
 
-	private DockingAction exportToolAction;
 	private ToolServices toolServices;
 
 	private boolean isConfigurable = true;
@@ -170,6 +185,10 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		PluginToolMacAboutHandler.install(winMgr);
 
 		installHomeButton();
+	}
+
+	protected PluginTool() {
+		// non-public constructor for stub subclasses
 	}
 
 	public abstract PluginClassManager getPluginClassManager();
@@ -370,43 +389,36 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		winMgr.setDefaultComponent(provider);
 	}
 
-	@Override
 	public ToolTemplate getToolTemplate(boolean includeConfigState) {
 		throw new UnsupportedOperationException(
 			"You cannot create templates for generic tools: " + getClass().getName());
 	}
 
-	@Override
 	public ToolTemplate saveToolToToolTemplate() {
 		setConfigChanged(false);
 		optionsMgr.removeUnusedOptions();
 		return getToolTemplate(true);
 	}
 
-	@Override
 	public Element saveWindowingDataToXml() {
 		throw new UnsupportedOperationException(
 			"You cannot persist generic tools: " + getClass().getName());
 	}
 
-	@Override
 	public void restoreWindowingDataFromXml(Element windowData) {
 		throw new UnsupportedOperationException(
 			"You cannot persist generic tools: " + getClass().getName());
 	}
 
-	@Override
 	public boolean acceptDomainFiles(DomainFile[] data) {
 		return pluginMgr.acceptData(data);
 	}
 
-	@Override
 	public void addPropertyChangeListener(PropertyChangeListener l) {
 		propertyChangeMgr.addPropertyChangeListener(l);
 
 	}
 
-	@Override
 	public void addToolListener(ToolListener listener) {
 		eventMgr.addToolListener(listener);
 	}
@@ -419,7 +431,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		return eventMgr.hasToolListeners();
 	}
 
-	@Override
 	public void exit() {
 		dispose();
 	}
@@ -457,19 +468,17 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 	private void disposeManagers() {
 		taskMgr.dispose();
+		executingTaskListeners.clear();
 	}
 
-	@Override
 	public void firePluginEvent(PluginEvent event) {
 		eventMgr.fireEvent(event);
 	}
 
-	@Override
 	public String[] getConsumedToolEventNames() {
 		return eventMgr.getEventsConsumed();
 	}
 
-	@Override
 	public DomainFile[] getDomainFiles() {
 		return pluginMgr.getData();
 	}
@@ -479,12 +488,10 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		return iconURL.getIcon();
 	}
 
-	@Override
 	public ToolIconURL getIconURL() {
 		return iconURL;
 	}
 
-	@Override
 	public String getInstanceName() {
 		return instanceName;
 	}
@@ -494,22 +501,18 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		return fullName;
 	}
 
-	@Override
 	public Class<?>[] getSupportedDataTypes() {
 		return pluginMgr.getSupportedDataTypes();
 	}
 
-	@Override
 	public String[] getToolEventNames() {
 		return eventMgr.getEventsProduced();
 	}
 
-	@Override
 	public String getToolName() {
 		return toolName;
 	}
 
-	@Override
 	public void putInstanceName(String newInstanceName) {
 		this.instanceName = newInstanceName;
 		if (instanceName.length() == 0) {
@@ -521,24 +524,20 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		updateTitle();
 	}
 
-	@Override
 	public void removePropertyChangeListener(PropertyChangeListener l) {
 		propertyChangeMgr.removePropertyChangeListener(l);
 
 	}
 
-	@Override
 	public void removeToolListener(ToolListener listener) {
 		eventMgr.removeToolListener(listener);
 	}
 
-	@Override
 	public void restoreDataStateFromXml(Element root) {
 		pluginMgr.restoreDataStateFromXml(root);
 		setConfigChanged(false);
 	}
 
-	@Override
 	public Element saveDataStateToXml(boolean savingProject) {
 		return pluginMgr.saveDataStateToXml(savingProject);
 	}
@@ -571,7 +570,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		return hasErrors;
 	}
 
-	@Override
 	public Element saveToXml(boolean includeConfigState) {
 		Element root = new Element("TOOL");
 
@@ -592,7 +590,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		}
 	}
 
-	@Override
 	public void setIconURL(ToolIconURL newIconURL) {
 		if (newIconURL == null) {
 			throw new NullPointerException("iconURL cannot be null.");
@@ -610,7 +607,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		winMgr.setIcon(newValue);
 	}
 
-	@Override
 	public void setToolName(String name) {
 		String oldName = toolName;
 		toolName = name;
@@ -624,7 +620,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		propertyChangeMgr.firePropertyChange(TOOL_NAME_PROPERTY, oldName, toolName);
 	}
 
-	@Override
 	public void processToolEvent(PluginEvent toolEvent) {
 		eventMgr.processToolEvent(toolEvent);
 	}
@@ -649,7 +644,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	 * @return true if there is a command being executed
 	 */
 	public boolean isExecutingCommand() {
-		return taskMgr.isBusy();
+		return taskMgr.isBusy() || !executingTaskListeners.isEmpty();
 	}
 
 	/**
@@ -697,9 +692,29 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	}
 
 	/**
+	 * Launch the task in a new thread
+	 * @param task task to run in a new thread
+	 * @param delay number of milliseconds to delay the display of task monitor dialog
+	 */
+	public void execute(Task task, int delay) {
+		task.addTaskListener(new TaskBusyListener());
+		new TaskLauncher(task, getToolFrame(), delay);
+	}
+
+	/**
+	 * Launch the task in a new thread
+	 * @param task task to run in a new thread
+	 */
+	public void execute(Task task) {
+		task.addTaskListener(new TaskBusyListener());
+		new TaskLauncher(task, winMgr.getActiveWindow());
+	}
+
+	/**
 	 * Get the options for the given category name; if no options exist with
 	 * the given name, then one is created.
 	 */
+
 	@Override
 	public ToolOptions getOptions(String categoryName) {
 		return optionsMgr.getOptions(categoryName);
@@ -738,23 +753,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	 */
 	public ToolOptions[] getOptions() {
 		return optionsMgr.getOptions();
-	}
-
-	/**
-	 * Launch the task in a new thread.
-	 * @param task task to run in a new thread
-	 * @param delay number of milliseconds to delay the display of task monitor dialog
-	 */
-	public void execute(Task task, int delay) {
-		new TaskLauncher(task, getToolFrame(), delay);
-	}
-
-	/**
-	 * Launch the task in a new thread.
-	 * @param task task to run in a new thread
-	 */
-	public void execute(Task task) {
-		new TaskLauncher(task, winMgr.getActiveWindow());
 	}
 
 	/**
@@ -893,6 +891,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 	protected void addExitAction() {
 		DockingAction exitAction = new DockingAction("Exit Ghidra", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				AppInfo.exitGhidra();
@@ -917,6 +916,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 	protected void addOptionsAction() {
 		DockingAction optionsAction = new DockingAction("Edit Options", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				optionsMgr.editOptions();
@@ -942,6 +942,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	protected void addSaveToolAction() {
 
 		DockingAction saveAction = new DockingAction("Save Tool", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				saveTool();
@@ -955,6 +956,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		saveAction.setHelpLocation(new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Save Tool"));
 
 		DockingAction saveAsAction = new DockingAction("Save Tool As", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				saveToolAs();
@@ -966,34 +968,58 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		saveAsAction.setMenuBarData(menuData);
 
 		saveAsAction.setEnabled(true);
-		saveAsAction.setHelpLocation(
-			new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Tool_Changes"));
+		saveAsAction
+				.setHelpLocation(new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Tool_Changes"));
 
 		addAction(saveAction);
 		addAction(saveAsAction);
 	}
 
 	protected void addExportToolAction() {
-		exportToolAction = new DockingAction("Export Tool", ToolConstants.TOOL_OWNER) {
-			@Override
-			public void actionPerformed(ActionContext context) {
-				dialogMgr.exportTool();
-			}
-		};
-		MenuData menuData =
-			new MenuData(new String[] { ToolConstants.MENU_FILE, "Export Tool..." }, null, "Tool");
-		menuData.setMenuSubGroup("3Tool");
-		exportToolAction.setMenuBarData(menuData);
 
-		exportToolAction.setEnabled(true);
-		exportToolAction.setHelpLocation(
-			new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Export Tool"));
+		String menuGroup = "Tool";
+		String exportPullright = "Export";
+		setMenuGroup(new String[] { ToolConstants.MENU_FILE, exportPullright }, menuGroup);
+
+		int subGroup = 1;
+		DockingAction exportToolAction =
+			new DockingAction("Export Tool", ToolConstants.TOOL_OWNER) {
+
+				@Override
+				public void actionPerformed(ActionContext context) {
+					dialogMgr.exportTool();
+				}
+			};
+		MenuData menuData = new MenuData(
+			new String[] { ToolConstants.MENU_FILE, exportPullright, "Export Tool..." });
+		menuData.setMenuSubGroup(Integer.toString(subGroup++));
+		exportToolAction.setMenuBarData(menuData);
+		exportToolAction
+				.setHelpLocation(new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Export_Tool"));
 		addAction(exportToolAction);
+
+		DockingAction exportDefautToolAction =
+			new DockingAction("Export Default Tool", ToolConstants.TOOL_OWNER) {
+
+				@Override
+				public void actionPerformed(ActionContext e) {
+					dialogMgr.exportDefaultTool();
+				}
+			};
+		menuData = new MenuData(
+			new String[] { ToolConstants.MENU_FILE, exportPullright, "Export Default Tool..." });
+		menuData.setMenuSubGroup(Integer.toString(subGroup++));
+		exportDefautToolAction.setMenuBarData(menuData);
+		exportDefautToolAction.setHelpLocation(
+			new HelpLocation(ToolConstants.TOOL_HELP_TOPIC, "Export_Default_Tool"));
+
+		addAction(exportDefautToolAction);
 	}
 
 	protected void addHelpActions() {
 
 		DockingAction action = new DockingAction("About Ghidra", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				DockingWindowManager.showDialog(new AboutDialog());
@@ -1013,6 +1039,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 		DockingAction userAgreementAction = new DockingAction("User Agreement",
 			ToolConstants.TOOL_OWNER, KeyBindingType.UNSUPPORTED) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				DockingWindowManager.showDialog(new UserAgreementDialog(false, false));
@@ -1035,6 +1062,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		final ErrorReporter reporter = ErrLogDialog.getErrorReporter();
 		if (reporter != null) {
 			action = new DockingAction("Report Bug", ToolConstants.TOOL_OWNER) {
+
 				@Override
 				public void actionPerformed(ActionContext context) {
 					reporter.report(getToolFrame(), "User Bug Report", null);
@@ -1055,6 +1083,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 
 		HelpService help = Help.getHelpService();
 		action = new DockingAction("Contents", ToolConstants.TOOL_OWNER) {
+
 			@Override
 			public void actionPerformed(ActionContext context) {
 				help.showHelp(null, false, getToolFrame());
@@ -1093,6 +1122,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	 * 	<LI>notify the project tool services that this tool is going away.
 	 * </OL>
 	 */
+
 	@Override
 	public void close() {
 		if (canClose(false) && pluginMgr.saveData()) {
@@ -1119,7 +1149,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		toolServices.closeTool(this);
 	}
 
-	@Override
 	public boolean shouldSave() {
 		return configChangedFlag; // ignore the window layout changes
 	}
@@ -1163,10 +1192,11 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	 * <br>Note: This forces plugins to terminate any tasks they have running and
 	 * apply any unsaved data to domain objects or files. If they can't do
 	 * this or the user cancels then this returns false.
+	 * 
+	 * @param isExiting whether the tool is exiting
 	 * @return false if this tool has tasks in progress or can't be closed
 	 * since the user has unfinished/unsaved changes.
 	 */
-	@Override
 	public boolean canClose(boolean isExiting) {
 		if (taskMgr.isBusy()) {
 			if (isExiting) {
@@ -1214,7 +1244,6 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		return pluginMgr.canCloseDomainObject(domainObject);
 	}
 
-	@Override
 	public boolean canCloseDomainFile(DomainFile domainFile) {
 		Object consumer = new Object();
 		DomainObject domainObject = domainFile.getOpenedDomainObject(consumer);
@@ -1311,7 +1340,8 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		eventMgr.addEventProducer(eventClass);
 	}
 
-	void addEventListener(Class<? extends PluginEvent> eventClass, PluginEventListener listener) {
+	public void addEventListener(Class<? extends PluginEvent> eventClass,
+			PluginEventListener listener) {
 		eventMgr.addEventListener(eventClass, listener);
 	}
 
@@ -1327,7 +1357,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		eventMgr.removeAllEventListener(listener);
 	}
 
-	void removeEventListener(Class<? extends PluginEvent> eventClass,
+	public void removeEventListener(Class<? extends PluginEvent> eventClass,
 			PluginEventListener listener) {
 		eventMgr.removeEventListener(eventClass, listener);
 	}
@@ -1442,11 +1472,25 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		winMgr.removePreferenceState(name);
 	}
 
+	@Override
+	public ActionContext getDefaultToolContext() {
+		return winMgr.getDefaultToolContext();
+	}
+
+	@Override
+	public void contextChanged(ComponentProvider provider) {
+		if (isDisposed) {
+			return;
+		}
+		super.contextChanged(provider);
+	}
+
 //==================================================================================================
 // Inner Classes
 //==================================================================================================
 
 	private class ToolOptionsListener implements OptionsChangeListener {
+
 		@Override
 		public void optionsChanged(ToolOptions options, String name, Object oldValue,
 				Object newValue) {
@@ -1461,7 +1505,7 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 	private <T extends Throwable> void checkedRunSwingNow(CheckedRunnable<T> r,
 			Class<T> exceptionClass) throws T {
 		AtomicReference<Throwable> caughtException = new AtomicReference<>();
-		SystemUtilities.runSwingNow(() -> {
+		Swing.runNow(() -> {
 			try {
 				r.run();
 			}
@@ -1478,4 +1522,20 @@ public abstract class PluginTool extends AbstractDockingTool implements Tool, Se
 		}
 	}
 
+	private class TaskBusyListener implements TaskListener {
+
+		TaskBusyListener() {
+			executingTaskListeners.add(this);
+		}
+
+		@Override
+		public void taskCompleted(Task t) {
+			executingTaskListeners.remove(this);
+		}
+
+		@Override
+		public void taskCancelled(Task t) {
+			executingTaskListeners.remove(this);
+		}
+	}
 }

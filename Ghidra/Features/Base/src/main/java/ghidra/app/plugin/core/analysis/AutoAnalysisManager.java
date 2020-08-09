@@ -158,7 +158,7 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 		taskArray = new AnalysisTaskList[] { byteTasks, instructionTasks, functionTasks,
 			functionModifierChangedTasks, functionSignatureChangedTasks, dataTasks };
 
-		Set<Analyzer> analyzers = ClassSearcher.getInstances(Analyzer.class);
+		List<Analyzer> analyzers = ClassSearcher.getInstances(Analyzer.class);
 		for (Analyzer analyzer : analyzers) {
 			if (!analyzer.canAnalyze(program)) {
 				continue;
@@ -848,9 +848,6 @@ public class AutoAnalysisManager implements DomainObjectListener, DomainObjectCl
 		}
 		for (AutoAnalysisManagerListener listener : listeners) {
 			listener.analysisEnded(this);
-		}
-		if (log.getMsgCount() > 0) {
-			Msg.info(AutoAnalysisManager.class, log.toString());
 		}
 		log.clear();
 	}

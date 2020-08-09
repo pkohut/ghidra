@@ -33,7 +33,7 @@ import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.*;
 import ghidra.program.model.symbol.*;
 import ghidra.program.model.util.CodeUnitInsertionException;
-import ghidra.util.*;
+import ghidra.util.DataConverter;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.InvalidInputException;
 import ghidra.util.task.TaskMonitor;
@@ -180,13 +180,7 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 		ArrayList<OmfFixupRecord> fixups = header.getFixups();
 		OmfFixupRecord.FixupState state =
 			new OmfFixupRecord.FixupState(header, externsyms, program.getLanguage());
-		DataConverter converter;
-		if (header.isLittleEndian()) {
-			converter = new LittleEndianDataConverter();
-		}
-		else {
-			converter = new BigEndianDataConverter();
-		}
+		DataConverter converter = DataConverter.getInstance(!header.isLittleEndian());
 
 		for (OmfFixupRecord fixup : fixups) {
 			state.currentFixupRecord = fixup;
@@ -324,7 +318,7 @@ public class OmfLoader extends AbstractLibrarySupportLoader {
 			}
 			else if (segment.hasNonZeroData()) {
 				block = MemoryBlockUtils.createInitializedBlock(program, false, segment.getName(),
-					segmentAddr, segment.getRawDataStream(reader), segmentSize,
+					segmentAddr, segment.getRawDataStream(reader, log), segmentSize,
 					"Address:0x" + Long.toHexString(segmentAddr.getOffset()) + " " + "Size:0x" +
 						Long.toHexString(segmentSize),
 					null/*source*/, segment.isReadable(), segment.isWritable(),

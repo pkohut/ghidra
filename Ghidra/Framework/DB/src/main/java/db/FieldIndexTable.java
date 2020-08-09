@@ -31,10 +31,9 @@ public class FieldIndexTable extends IndexTable {
 	/**
 	 * Construct a new secondary index which is based upon a specific field within the
 	 * primary table specified by name.
-	 * @param db database handle
 	 * @param primaryTable primary table.
 	 * @param colIndex identifies the indexed column within the primary table.
-	 * @throws IOException
+	 * @throws IOException thrown if an IO error occurs 
 	 */
 	FieldIndexTable(Table primaryTable, int colIndex) throws IOException {
 		this(primaryTable, primaryTable.getDBHandle().getMasterTable().createTableRecord(
@@ -43,12 +42,12 @@ public class FieldIndexTable extends IndexTable {
 
 	/**
 	 * Construct a new or existing secondary index. An existing index must have
-	 * its' root ID specified within the tableRecord.
-	 * @param db database handle
-	 * @param bufferMgr database buffer manager
+	 * its root ID specified within the tableRecord.
+	 * @param primaryTable primary table.
 	 * @param indexTableRecord specifies the index parameters.
+	 * @throws IOException thrown if an IO error occurs 
 	 */
-	FieldIndexTable(Table primaryTable, TableRecord indexTableRecord) {
+	FieldIndexTable(Table primaryTable, TableRecord indexTableRecord) throws IOException {
 		super(primaryTable, indexTableRecord);
 		this.indexSchema = indexTable.getSchema();
 		this.indexColumn = indexTableRecord.getIndexedColumn();
@@ -245,8 +244,9 @@ public class FieldIndexTable extends IndexTable {
 
 		@Override
 		public boolean hasNext() throws IOException {
-			if (hasNext)
+			if (hasNext) {
 				return true;
+			}
 			hasPrev = false;  // TODO ???
 			indexKey = (IndexField) indexIterator.next();
 			int skipCnt = 0;
@@ -260,8 +260,9 @@ public class FieldIndexTable extends IndexTable {
 				indexKey = (IndexField) indexIterator.next();
 			}
 
-			if (indexKey == null)
+			if (indexKey == null) {
 				return false;
+			}
 
 			hasNext = true;
 			return true;
@@ -269,8 +270,9 @@ public class FieldIndexTable extends IndexTable {
 
 		@Override
 		public boolean hasPrevious() throws IOException {
-			if (hasPrev)
+			if (hasPrev) {
 				return true;
+			}
 			hasNext = false;  // TODO ???
 			indexKey = (IndexField) indexIterator.previous();
 			int skipCnt = 0;
@@ -284,8 +286,9 @@ public class FieldIndexTable extends IndexTable {
 				indexKey = (IndexField) indexIterator.previous();
 			}
 
-			if (indexKey == null)
+			if (indexKey == null) {
 				return false;
+			}
 
 			hasPrev = true;
 			return true;
@@ -322,12 +325,13 @@ public class FieldIndexTable extends IndexTable {
 		 */
 		@Override
 		public boolean delete() throws IOException {
-			if (lastKey == null)
+			if (lastKey == null) {
 				return false;
+			}
 			synchronized (db) {
 				long[] keys = findPrimaryKeys(lastKey.getIndexField());
-				for (int i = 0; i < keys.length; i++) {
-					primaryTable.deleteRecord(keys[i]);
+				for (long key : keys) {
+					primaryTable.deleteRecord(key);
 				}
 				lastKey = null;
 				return true;

@@ -21,10 +21,11 @@ import java.math.BigInteger;
 import docking.widgets.fieldpanel.Layout;
 import docking.widgets.fieldpanel.LayoutModel;
 import docking.widgets.fieldpanel.field.Field;
+import docking.widgets.fieldpanel.listener.IndexMapper;
 import docking.widgets.fieldpanel.listener.LayoutModelListener;
 import docking.widgets.fieldpanel.support.*;
 import ghidra.app.util.viewer.field.*;
-import ghidra.app.util.viewer.format.FormatManager;
+import ghidra.app.util.viewer.util.AddressBasedIndexMapper;
 import ghidra.app.util.viewer.util.AddressIndexMap;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.Array;
@@ -34,7 +35,6 @@ import ghidra.program.util.*;
 import ghidra.util.datastruct.WeakDataStructureFactory;
 import ghidra.util.datastruct.WeakSet;
 import ghidra.util.task.SwingUpdateManager;
-import ghidra.util.task.TaskMonitor;
 
 public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 	private static Class<?> defaultFieldFactoryClass = AddressFieldFactory.class;
@@ -48,7 +48,7 @@ public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 	private Dimension preferredViewSize;
 
 	public ListingModelAdapter(ListingModel bigListingModel) {
-		this.model = bigListingModel != null ? bigListingModel : new EmptyBigListingModel();
+		this.model = bigListingModel != null ? bigListingModel : new EmptyListingModel();
 		addressToIndexMap = new AddressIndexMap(model.getAddressSet());
 		removeUnviewableAddressRanges();
 		model.addListener(this);
@@ -190,7 +190,7 @@ public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 	public void modelSizeChanged() {
 		preferredViewSize = null;
 		for (LayoutModelListener listener : listeners) {
-			listener.modelSizeChanged();
+			listener.modelSizeChanged(IndexMapper.IDENTITY_MAPPER);
 		}
 	}
 
@@ -446,20 +446,23 @@ public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 	}
 
 	protected void resetIndexMap() {
-		BigInteger indexCount = addressToIndexMap.getIndexCount();
-		addressToIndexMap.reset();
+		AddressIndexMap previous = addressToIndexMap.reset();
 		removeUnviewableAddressRanges();
-		if (!addressToIndexMap.getIndexCount().equals(indexCount)) {
-			modelSizeChanged();
+		AddressBasedIndexMapper mapper = new AddressBasedIndexMapper(previous, addressToIndexMap);
+		for (LayoutModelListener listener : listeners) {
+			listener.modelSizeChanged(mapper);
 		}
 	}
 
-	private void removeUnviewableAddressRanges() {
+	private boolean removeUnviewableAddressRanges() {
+		boolean changed = false;
 		AddressSet set = findUnviewableAddressRanges();
 		while (!set.isEmpty()) {
+			changed = true;
 			addressToIndexMap.removeUnviewableAddressRanges(set);
 			set = findUnviewableAddressRanges();
 		}
+		return changed;
 	}
 
 	private AddressSet findUnviewableAddressRanges() {
@@ -488,8 +491,8 @@ public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 		if (indexBefore == null) {
 			indexBefore = BigInteger.ZERO;
 		}
-		if (indexAfter.subtract(indexBefore).compareTo(
-			addressToIndexMap.getMiniumUnviewableGapSize()) > 0) {
+		if (indexAfter.subtract(indexBefore)
+				.compareTo(addressToIndexMap.getMiniumUnviewableGapSize()) > 0) {
 			Address start = addressToIndexMap.getAddress(indexBefore.add(BigInteger.ONE));
 			Address end = addressToIndexMap.getAddress(indexAfter.subtract(BigInteger.ONE));
 			if (start != null && end != null &&
@@ -499,108 +502,6 @@ public class ListingModelAdapter implements LayoutModel, ListingModelListener {
 		}
 	}
 
-	static class EmptyBigListingModel implements ListingModel {
-		@Override
-		public void addListener(ListingModelListener listener) {
-			// stub
-		}
-
-		@Override
-		public Address getAddressAfter(Address address) {
-			return null;
-		}
-
-		@Override
-		public Address getAddressBefore(Address address) {
-			return null;
-		}
-
-		@Override
-		public AddressSetView getAddressSet() {
-			return new AddressSet();
-		}
-
-		@Override
-		public Layout getLayout(Address address, boolean isGapAddress) {
-			return null;
-		}
-
-		@Override
-		public int getMaxWidth() {
-			return 0;
-		}
-
-		@Override
-		public Program getProgram() {
-			return null;
-		}
-
-		@Override
-		public boolean isOpen(Data object) {
-			return false;
-		}
-
-		@Override
-		public void removeListener(ListingModelListener listener) {
-			// stub
-		}
-
-		@Override
-		public void toggleOpen(Data object) {
-			// stub
-		}
-
-		@Override
-		public void openAllData(Data data, TaskMonitor monitor) {
-			// stub
-		}
-
-		@Override
-		public void closeAllData(Data data, TaskMonitor monitor) {
-			// stub
-		}
-
-		@Override
-		public void openAllData(AddressSetView addresses, TaskMonitor monitor) {
-			// stub
-		}
-
-		@Override
-		public void closeAllData(AddressSetView addresses, TaskMonitor monitor) {
-			// stub
-		}
-
-		@Override
-		public void closeData(Data data) {
-			// stub
-		}
-
-		@Override
-		public void openData(Data data) {
-			// stub
-		}
-
-		@Override
-		public boolean isClosed() {
-			return false;
-		}
-
-		@Override
-		public void setFormatManager(FormatManager formatManager) {
-			// stub
-		}
-
-		@Override
-		public void dispose() {
-			// stub
-		}
-
-		@Override
-		public AddressSet adjustAddressSetToCodeUnitBoundaries(AddressSet addressSet) {
-			return new AddressSet();
-		}
-
-	}
 
 	public Layout getLayout(Address addr) {
 		BigInteger index = addressToIndexMap.getIndex(addr);

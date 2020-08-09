@@ -101,11 +101,13 @@ public class ProgramAddressFactory extends DefaultAddressFactory {
 		addAddressSpace(ovSpace);
 	}
 
-	public OverlayAddressSpace addOverlayAddressSpace(String name,AddressSpace originalSpace,
+	public OverlayAddressSpace addOverlayAddressSpace(String name, AddressSpace originalSpace,
 			long minOffset, long maxOffset) throws DuplicateNameException {
 		int unique = 0;
-		if (originalSpace.getType() == AddressSpace.TYPE_RAM)
+		if (originalSpace.getType() == AddressSpace.TYPE_RAM ||
+			originalSpace.getType() == AddressSpace.TYPE_OTHER) {
 			unique = getNextUniqueID();
+		}
 		OverlayAddressSpace ovSpace =
 			new OverlayAddressSpace(name, originalSpace, unique, minOffset, maxOffset);
 		addAddressSpace(ovSpace);
@@ -115,7 +117,7 @@ public class ProgramAddressFactory extends DefaultAddressFactory {
 	@Override
 	public Address getAddress(int spaceID, long offset) {
 		Address addr = super.getAddress(spaceID, offset);
-		if (addr == null && spaceID == stackSpace.getUniqueSpaceID()) {
+		if (addr == null && spaceID == stackSpace.getSpaceID()) {
 			return stackSpace.getAddress(offset);
 		}
 		return addr;
@@ -145,15 +147,16 @@ public class ProgramAddressFactory extends DefaultAddressFactory {
 	}
 
 	@Override
-	protected void renameOverlaySpace(String oldName, String newName) throws DuplicateNameException {
+	protected void renameOverlaySpace(String oldName, String newName)
+			throws DuplicateNameException {
 		super.renameOverlaySpace(oldName, newName);
 	}
 
 	private int getNextUniqueID() {
 		int maxID = 0;
 		AddressSpace[] spaces = getAllAddressSpaces();
-		for (int i = 0; i < spaces.length; i++) {
-			maxID = Math.max(maxID, spaces[i].getUnique());
+		for (AddressSpace space : spaces) {
+			maxID = Math.max(maxID, space.getUnique());
 		}
 		return maxID + 1;
 	}

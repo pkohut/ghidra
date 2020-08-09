@@ -73,8 +73,8 @@ void OpBehavior::registerInstructions(vector<OpBehavior *> &inst,const Translate
   inst[CPUI_BOOL_OR] = new OpBehaviorBoolOr();
 
   inst[CPUI_CAST] = new OpBehavior(CPUI_CAST,false,true);
-  inst[CPUI_PTRADD] = new OpBehavior(CPUI_PTRADD,false,true);
-  inst[CPUI_PTRSUB] = new OpBehavior(CPUI_PTRSUB,false,true);
+  inst[CPUI_PTRADD] = new OpBehavior(CPUI_PTRADD,false);
+  inst[CPUI_PTRSUB] = new OpBehavior(CPUI_PTRSUB,false);
 
   inst[CPUI_FLOAT_EQUAL] = new OpBehaviorFloatEqual(trans);
   inst[CPUI_FLOAT_NOTEQUAL] = new OpBehaviorFloatNotEqual(trans);
@@ -99,6 +99,9 @@ void OpBehavior::registerInstructions(vector<OpBehavior *> &inst,const Translate
   inst[CPUI_SEGMENTOP] = new OpBehavior(CPUI_SEGMENTOP,false,true);
   inst[CPUI_CPOOLREF] = new OpBehavior(CPUI_CPOOLREF,false,true);
   inst[CPUI_NEW] = new OpBehavior(CPUI_NEW,false,true);
+  inst[CPUI_INSERT] = new OpBehavior(CPUI_INSERT,false);
+  inst[CPUI_EXTRACT] = new OpBehavior(CPUI_EXTRACT,false);
+  inst[CPUI_POPCOUNT] = new OpBehaviorPopcount();
 }
 
 /// \param sizeout is the size of the output in bytes
@@ -723,5 +726,11 @@ uintb OpBehaviorSubpiece::evaluateBinary(int4 sizeout,int4 sizein,uintb in1,uint
 {
   uintb res = (in1>>(in2*8)) & calc_mask(sizeout);
   return res;
+}
+
+uintb OpBehaviorPopcount::evaluateUnary(int4 sizeout,int4 sizein,uintb in1) const
+
+{
+  return (uintb)popcount(in1);
 }
 

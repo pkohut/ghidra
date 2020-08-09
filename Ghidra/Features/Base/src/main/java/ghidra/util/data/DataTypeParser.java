@@ -19,11 +19,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 import ghidra.app.plugin.core.datamgr.util.DataTypeUtils;
-import ghidra.app.services.DataTypeManagerService;
+import ghidra.app.services.DataTypeQueryService;
 import ghidra.program.database.data.DataTypeUtilities;
 import ghidra.program.database.data.ProgramDataTypeManager;
 import ghidra.program.model.data.*;
 import ghidra.util.exception.AssertException;
+import ghidra.util.exception.CancelledException;
 
 public class DataTypeParser {
 
@@ -86,7 +87,7 @@ public class DataTypeParser {
 
 	private DataTypeManager sourceDataTypeManager;			// may be null
 	private DataTypeManager destinationDataTypeManager;		// may be null
-	private DataTypeManagerService dataTypeManagerService;	// may be null
+	private DataTypeQueryService dataTypeManagerService;	// may be null
 	private AllowedDataTypes allowedTypes;
 
 	/**
@@ -97,7 +98,7 @@ public class DataTypeParser {
 	 * @param dataTypeManagerService
 	 * @param allowedTypes
 	 */
-	public DataTypeParser(DataTypeManagerService dataTypeManagerService,
+	public DataTypeParser(DataTypeQueryService dataTypeManagerService,
 			AllowedDataTypes allowedTypes) {
 		this.dataTypeManagerService = dataTypeManagerService;
 		this.allowedTypes = allowedTypes;
@@ -110,11 +111,11 @@ public class DataTypeParser {
 	 * @param dataTypeManagerService data-type manager tool service, or null
 	 * @param allowedTypes constrains which data-types may be parsed
 	 *
-	 * @see #DataTypeParser(DataTypeManagerService, AllowedDataTypes)
+	 * @see #DataTypeParser(DataTypeQueryService, AllowedDataTypes)
 	 */
 	public DataTypeParser(DataTypeManager sourceDataTypeManager,
 			DataTypeManager destinationDataTypeManager,
-			DataTypeManagerService dataTypeManagerService, AllowedDataTypes allowedTypes) {
+			DataTypeQueryService dataTypeManagerService, AllowedDataTypes allowedTypes) {
 		this.sourceDataTypeManager = sourceDataTypeManager;
 		this.destinationDataTypeManager = destinationDataTypeManager;
 		this.dataTypeManagerService = dataTypeManagerService;
@@ -126,8 +127,10 @@ public class DataTypeParser {
 	 * @param dataTypeString a known data-type name followed by zero or more pointer/array decorations.
 	 * @return parsed data-type or null if not found
 	 * @throws InvalidDataTypeException if data-type string is invalid or length exceeds specified maxSize
+	 * @throws CancelledException parse cancelled through user interaction
 	 */
-	public DataType parse(String dataTypeString) throws InvalidDataTypeException {
+	public DataType parse(String dataTypeString)
+			throws InvalidDataTypeException, CancelledException {
 		return parse(dataTypeString, (CategoryPath) null);
 	}
 
@@ -138,9 +141,10 @@ public class DataTypeParser {
 	 * @param category known path of data-type or null if unknown
 	 * @return parsed data-type or null if not found
 	 * @throws InvalidDataTypeException if data-type string is invalid or length exceeds specified maxSize
+	 * @throws CancelledException parse cancelled through user interaction (only if parser contructed with service)
 	 */
 	public DataType parse(String dataTypeString, CategoryPath category)
-			throws InvalidDataTypeException {
+			throws InvalidDataTypeException, CancelledException {
 		dataTypeString = dataTypeString.replaceAll("\\s+", " ").trim();
 		String dataTypeName = getBaseString(dataTypeString);
 		DataType namedDt = getNamedDataType(dataTypeName, category);
@@ -158,9 +162,10 @@ public class DataTypeParser {
 	 * The string may start with the baseDataType's name.
 	 * @return parsed data-type or null if not found
 	 * @throws InvalidDataTypeException if data-type string is invalid or length exceeds specified maxSize
+	 * @throws CancelledException parse cancelled through user interaction (only if parser contructed with service)
 	 */
 	public DataType parse(String dataTypeString, DataType suggestedBaseDataType)
-			throws InvalidDataTypeException {
+			throws InvalidDataTypeException, CancelledException {
 		dataTypeString = dataTypeString.replaceAll("\\s+", " ").trim();
 		String dataTypeName = getBaseString(dataTypeString);
 		if (dataTypeName == null || dataTypeName.length() == 0) {
@@ -244,6 +249,7 @@ public class DataTypeParser {
 		List<DtPiece> modifiers = new ArrayList<>();
 		boolean terminalModifier = false;
 		for (String piece : splitDataTypeModifiers(dataTypeModifiers)) {
+			piece = piece.trim();
 			if (terminalModifier) {
 				throw new InvalidDataTypeException("Invalid data type modifier");
 			}
@@ -312,7 +318,7 @@ public class DataTypeParser {
 	}
 
 	private DataType getNamedDataType(String baseName, CategoryPath category)
-			throws InvalidDataTypeException {
+			throws InvalidDataTypeException, CancelledException {
 
 		List<DataType> results = new ArrayList<>();
 		DataType dt = findDataType(sourceDataTypeManager, baseName, category, results);
@@ -338,7 +344,8 @@ public class DataTypeParser {
 		return dt.clone(destinationDataTypeManager);
 	}
 
-	private DataType findDataTypeInAllDataTypeManagers(String baseName, List<DataType> results) {
+	private DataType findDataTypeInAllDataTypeManagers(String baseName, List<DataType> results)
+			throws CancelledException {
 		if (results.isEmpty() && dataTypeManagerService != null) {
 			results.addAll(
 				DataTypeUtils.getExactMatchingDataTypes(baseName, dataTypeManagerService));
@@ -351,6 +358,9 @@ public class DataTypeParser {
 			if (dt == null && dataTypeManagerService != null) {
 				// give up and ask the user
 				dt = dataTypeManagerService.getDataType(baseName);
+				if (dt == null) {
+					throw new CancelledException();
+				}
 			}
 		}
 		return dt;
@@ -361,7 +371,7 @@ public class DataTypeParser {
 
 		DataTypeManager builtInDTM = BuiltInDataTypeManager.getDataTypeManager();
 		if (dtm == null) {
-			// not DTM specified--try the built-ins
+			// no DTM specified--try the built-ins
 			return findDataType(builtInDTM, baseName, category, list);
 		}
 
@@ -429,8 +439,21 @@ public class DataTypeParser {
 
 	private static String getBaseString(String dataTypeString) {
 		int nextIndex = 0;
+		int templateCount = 0;
 		while (nextIndex < dataTypeString.length()) {
 			char c = dataTypeString.charAt(nextIndex);
+			if (c == '<') {
+				templateCount++;
+			}
+			else if (c == '>') {
+				templateCount--;
+			}
+
+			if (templateCount != 0) {
+				++nextIndex;
+				continue;
+			}
+
 			if (c == '*' || c == '[' || c == ':' || c == '{') {
 				return dataTypeString.substring(0, nextIndex).trim();
 			}

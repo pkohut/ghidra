@@ -68,7 +68,7 @@ public class ImporterDialog extends DialogComponentProvider {
 	private ProgramManager programManager;
 	protected FSRL fsrl;
 	protected List<Option> options;
-	private Map<Loader, Collection<LoadSpec>> loadMap;
+	private LoaderMap loaderMap;
 	protected LanguageCompilerSpecPair selectedLanguage;
 	private DomainFolder destinationFolder;
 	private boolean languageNeeded;
@@ -88,7 +88,7 @@ public class ImporterDialog extends DialogComponentProvider {
 	 * Construct a new dialog for importing a file as a new program into Ghidra.
 	 * @param tool the active tool that spawned this dialog.
 	 * @param programManager program manager to open imported file with or null
-	 * @param loadMap the loaders and their corresponding load specifications
+	 * @param loaderMap the loaders and their corresponding load specifications
 	 * @param byteProvider the ByteProvider for getting the bytes from the file to be imported.
 	 * @param suggestedDestinationPath optional string path that will be pre-pended to the destination
 	 * filename.  Any path specified in the destination filename field will be created when
@@ -96,22 +96,20 @@ public class ImporterDialog extends DialogComponentProvider {
 	 * option which requires the DomainFolder to already exist). The two destination paths work together
 	 * to specify the final Ghidra project folder where the imported binary is placed.
 	 */
-	public ImporterDialog(PluginTool tool, ProgramManager programManager,
-			Map<Loader, Collection<LoadSpec>> loadMap, ByteProvider byteProvider,
-			String suggestedDestinationPath) {
-		this("Import " + byteProvider.getFSRL().getPath(), tool, loadMap, byteProvider,
+	public ImporterDialog(PluginTool tool, ProgramManager programManager, LoaderMap loaderMap,
+			ByteProvider byteProvider, String suggestedDestinationPath) {
+		this("Import " + byteProvider.getFSRL().getPath(), tool, loaderMap, byteProvider,
 			suggestedDestinationPath);
 		this.programManager = programManager;
 	}
 
-	protected ImporterDialog(String title, PluginTool tool,
-			Map<Loader, Collection<LoadSpec>> loadMap, ByteProvider byteProvider,
-			String suggestedDestinationPath) {
+	protected ImporterDialog(String title, PluginTool tool, LoaderMap loaderMap,
+			ByteProvider byteProvider, String suggestedDestinationPath) {
 		super(title);
 		this.tool = tool;
 		this.programManager = tool.getService(ProgramManager.class);
 		this.fsrl = byteProvider.getFSRL();
-		this.loadMap = loadMap;
+		this.loaderMap = loaderMap;
 		this.byteProvider = byteProvider;
 		this.suggestedDestinationPath = suggestedDestinationPath;
 
@@ -231,7 +229,7 @@ public class ImporterDialog extends DialogComponentProvider {
 			if (selectedItem instanceof Loader) {
 				Loader loader = (Loader) selectedItem;
 				ImporterLanguageDialog dialog =
-					new ImporterLanguageDialog(loadMap.get(loader), tool, selectedLanguage);
+					new ImporterLanguageDialog(loaderMap.get(loader), tool, selectedLanguage);
 				dialog.show(getComponent());
 				LanguageCompilerSpecPair dialogResult = dialog.getSelectedLanguage();
 				if (dialogResult != null) {
@@ -254,7 +252,7 @@ public class ImporterDialog extends DialogComponentProvider {
 		JPanel panel = new JPanel(new BorderLayout());
 
 		Set<Loader> set = new LinkedHashSet<>(); // maintain order
-		for (Loader loader : loadMap.keySet()) {
+		for (Loader loader : loaderMap.keySet()) {
 			if (isSupported(loader)) {
 				set.add(loader);
 			}
@@ -321,7 +319,7 @@ public class ImporterDialog extends DialogComponentProvider {
 	}
 
 	private boolean isLanguageNeeded(Loader loader) {
-		return loadMap.get(loader).stream().anyMatch(spec -> spec.requiresLanguageCompilerSpec());
+		return loaderMap.get(loader).stream().anyMatch(spec -> spec.requiresLanguageCompilerSpec());
 	}
 
 	private Component buildButtonPanel() {
@@ -346,10 +344,10 @@ public class ImporterDialog extends DialogComponentProvider {
 			String programPath = removeTrailingSlashes(getName());
 			DomainFolder importFolder = getOrCreateImportFolder(destinationFolder, programPath);
 			String programName = FilenameUtils.getName(programPath);
-			List<Option> localOptions = getOptions(loadSpec);
+			options = getOptions(loadSpec);  // make sure you get the options now, before the ByteProvider is closed.
 			TaskLauncher.launchNonModal("Import File", monitor -> {
 				ImporterUtilities.importSingleFile(tool, programManager, fsrl, importFolder,
-					loadSpec, programName, localOptions, monitor);
+					loadSpec, programName, options, monitor);
 			});
 			close();
 		}
@@ -404,24 +402,24 @@ public class ImporterDialog extends DialogComponentProvider {
 			AddressFactory addressFactory = selectedLanguage.getLanguage().getAddressFactory();
 			LoadSpec loadSpec = getSelectedLoadSpec(loader);
 			OptionValidator validator =
-				optionList -> loader.validateOptions(byteProvider, loadSpec, optionList);
+				optionList -> loader.validateOptions(byteProvider, loadSpec, optionList, null);
 
 			AddressFactoryService service = () -> addressFactory;
 
-			List<Option> defaultOptions = getOptions(loadSpec);
-			if (defaultOptions.isEmpty()) {
+			List<Option> currentOptions = getOptions(loadSpec);
+			if (currentOptions.isEmpty()) {
 				Msg.showInfo(this, null, "Options", "There are no options for this importer!");
 				return;
 			}
 
-			OptionsDialog optionsDialog = new OptionsDialog(defaultOptions, validator, service);
+			OptionsDialog optionsDialog = new OptionsDialog(currentOptions, validator, service);
 			optionsDialog.setHelpLocation(
 				new HelpLocation("ImporterPlugin", getAnchorForSelectedLoader(loader)));
 			tool.showDialog(optionsDialog);
 			if (!optionsDialog.wasCancelled()) {
 				options = optionsDialog.getOptions();
 			}
-
+			validateFormInput();
 		}
 		catch (LanguageNotFoundException e) {
 			Msg.showError(this, null, "Language Error",
@@ -434,7 +432,7 @@ public class ImporterDialog extends DialogComponentProvider {
 	}
 
 	protected LoadSpec getSelectedLoadSpec(Loader loader) {
-		Collection<LoadSpec> loadSpecs = loadMap.get(loader);
+		Collection<LoadSpec> loadSpecs = loaderMap.get(loader);
 		long imageBase = 0;
 		if (loadSpecs != null && !loadSpecs.isEmpty()) {
 			imageBase = loadSpecs.iterator().next().getDesiredImageBase();
@@ -565,12 +563,16 @@ public class ImporterDialog extends DialogComponentProvider {
 	}
 
 	private LanguageCompilerSpecPair getPreferredLanguage(Loader loader) {
-		for (LoadSpec loadSpec : loadMap.get(loader)) {
+		LanguageCompilerSpecPair preferredSpecPair = null;
+		for (LoadSpec loadSpec : loaderMap.get(loader)) {
 			if (loadSpec.isPreferred()) {
-				return loadSpec.getLanguageCompilerSpec();
+				if (preferredSpecPair != null) {
+					return null;
+				}
+				preferredSpecPair = loadSpec.getLanguageCompilerSpec();
 			}
 		}
-		return null;
+		return preferredSpecPair;
 	}
 
 	private DomainFolder getProjectRootFolder() {

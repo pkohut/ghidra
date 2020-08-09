@@ -27,11 +27,11 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.util.ProgramLocation;
 import ghidra.program.util.ProgramSelection;
 import ghidra.util.Msg;
-import ghidra.util.classfinder.ExtensionPoint;
+import ghidra.util.classfinder.ExtensionPointProperties;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
-@ExtensionPoint.Exclude(reason = "requires explicit instantiation to wrap a script")
+@ExtensionPointProperties(exclude = true) // exclude class from extension point discovery because it has to be directly instantiated in order to wrap the supplied script
 public class GhidraScriptAnalyzerAdapter extends AbstractAnalyzer {
 
 	private ResourceFile scriptFile;
@@ -48,7 +48,7 @@ public class GhidraScriptAnalyzerAdapter extends AbstractAnalyzer {
 	}
 
 	private static String getDescription(ResourceFile file) {
-		return GhidraScriptUtil.getScriptInfo(file).getDescription();
+		return GhidraScriptUtil.newScriptInfo(file).getDescription();
 	}
 
 	public void setPrintWriter(PrintWriter writer) {
@@ -70,7 +70,30 @@ public class GhidraScriptAnalyzerAdapter extends AbstractAnalyzer {
 		Project project = null;
 		GhidraState scriptState = new GhidraState(null, project, program, loc, selection, null);
 
-		return GhidraScriptUtil.runScript(scriptState, script, writer, this, monitor);
+		return runScript(scriptState, monitor);
+	}
+
+	private boolean runScript(GhidraState scriptState, TaskMonitor monitor) {
+
+		ResourceFile srcFile = script.getSourceFile();
+		String scriptName =
+			srcFile != null ? srcFile.getAbsolutePath() : (script.getClass().getName() + ".class");
+
+		try {
+			Msg.info(this, "SCRIPT: " + scriptName);
+			script.execute(scriptState, monitor, writer);
+			writer.flush();
+		}
+		catch (Exception exc) {
+			Program prog = scriptState.getCurrentProgram();
+			String path = (prog != null ? prog.getExecutablePath() : "Current program is null.");
+			String logErrorMsg =
+				path + "\nREPORT SCRIPT ERROR: " + scriptName + " : " + exc.getMessage();
+			Msg.error(this, logErrorMsg, exc);
+			return false;
+		}
+
+		return true;
 	}
 
 	private GhidraScript getGhidraScript() {

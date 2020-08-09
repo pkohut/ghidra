@@ -17,13 +17,12 @@ package ghidra.program.model.data;
 
 import java.util.*;
 
-import ghidra.app.plugin.core.datamgr.archive.SourceArchive;
 import ghidra.docking.settings.Settings;
 import ghidra.program.model.data.AlignedStructurePacker.StructurePackResult;
 import ghidra.program.model.mem.MemBuffer;
 import ghidra.util.Msg;
 import ghidra.util.UniversalID;
-import ghidra.util.exception.InvalidInputException;
+import ghidra.util.exception.AssertException;
 
 /**
  * Basic implementation of the structure data type
@@ -41,28 +40,55 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	private int alignment = -1;
 
 	/**
-	 * Construct a new structure with the given name and number of undefined bytes
+	 * Construct a new structure with the given name and length.
+	 * The root category will be used.
 	 * @param name the name of the new structure
-	 * @param length the initial size of the structure
+	 * @param length the initial size of the structure in bytes.  If 0 is specified
+	 * the structure will report its length as 1 and {@link #isNotYetDefined()}
+	 * will return true.
 	 */
 	public StructureDataType(String name, int length) {
 		this(CategoryPath.ROOT, name, length);
 	}
 
+	/**
+	 * Construct a new structure with the given name, length and datatype manager 
+	 * which conveys data organization.  The root category will be used.
+	 * @param name the name of the new structure
+	 * @param length the initial size of the structure in bytes.  If 0 is specified
+	 * the structure will report its length as 1 and {@link #isNotYetDefined()}
+	 * will return true.
+	 * @param dtm the data type manager associated with this data type. This can be null. 
+	 * Also, the data type manager may not yet contain this actual data type.
+	 */
 	public StructureDataType(String name, int length, DataTypeManager dtm) {
 		this(CategoryPath.ROOT, name, length, dtm);
 	}
 
 	/**
-	 * Construct a new structure with the given name and number of undefined bytes
+	 * Construct a new structure with the given name and length within the
+	 * specified categry path.
 	 * @param path the category path indicating where this data type is located.
 	 * @param name the name of the new structure
-	 * @param length the initial size of the structure
+	 * @param length the initial size of the structure in bytes.  If 0 is specified
+	 * the structure will report its length as 1 and {@link #isNotYetDefined()}
+	 * will return true.
 	 */
 	public StructureDataType(CategoryPath path, String name, int length) {
 		this(path, name, length, null);
 	}
 
+	/**
+	 * Construct a new structure with the given name, length and datatype manager
+	 * within the specified categry path.
+	 * @param path the category path indicating where this data type is located.
+	 * @param name the name of the new structure
+	 * @param length the initial size of the structure in bytes.  If 0 is specified
+	 * the structure will report its length as 1 and {@link #isNotYetDefined()}
+	 * will return true.
+	 * @param dtm the data type manager associated with this data type. This can be null. 
+	 * Also, the data type manager may not yet contain this actual data type.
+	 */
 	public StructureDataType(CategoryPath path, String name, int length, DataTypeManager dtm) {
 		super(path, name, dtm);
 		if (length < 0) {
@@ -75,12 +101,19 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	}
 
 	/**
-	 * Construct a new structure with the given name and number of undefined bytes
+	 * Construct a new structure with the given name and length
 	 * @param path the category path indicating where this data type is located.
 	 * @param name the name of the new structure
-	 * @param length the initial size of the structure
-	 * @param dataTypeManager the data type manager associated with this data type. This can be null. 
-	 * Also, the data type manager may not contain this actual data type.
+	 * @param length the initial size of the structure in bytes.  If 0 is specified
+	 * the structure will report its length as 1 and {@link #isNotYetDefined()}
+	 * will return true.
+	 * @param universalID the id for the data type
+	 * @param sourceArchive the source archive for this data type
+	 * @param lastChangeTime the last time this data type was changed
+	 * @param lastChangeTimeInSourceArchive the last time this data type was changed in
+	 * its source archive.
+	 * @param dtm the data type manager associated with this data type. This can be null. 
+	 * Also, the data type manager may not yet contain this actual data type.
 	 */
 	public StructureDataType(CategoryPath path, String name, int length, UniversalID universalID,
 			SourceArchive sourceArchive, long lastChangeTime, long lastChangeTimeInSourceArchive,
@@ -291,10 +324,26 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 
 	@Override
 	public DataTypeComponentImpl insertAtOffset(int offset, DataType dataType, int length,
-			String componentName, String comment) {
+			String componentName, String comment) throws IllegalArgumentException {
+
 		if (offset < 0) {
 			throw new IllegalArgumentException("Offset cannot be negative.");
 		}
+
+		if (dataType instanceof BitFieldDataType) {
+			BitFieldDataType bfDt = (BitFieldDataType) dataType;
+			if (length <= 0) {
+				length = dataType.getLength();
+			}
+			try {
+				return insertBitFieldAt(offset, length, bfDt.getBitOffset(), bfDt.getBaseDataType(),
+					bfDt.getDeclaredBitSize(), componentName, comment);
+			}
+			catch (InvalidDataTypeException e) {
+				throw new AssertException(e);
+			}
+		}
+
 		validateDataType(dataType);
 
 		dataType = dataType.clone(dataMgr);
@@ -362,10 +411,12 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	 * set based upon the specified fixed-length dataType;
 	 * @param componentName component name
 	 * @param comment componetn comment
-	 * @return
+	 * @return newly added component
+	 * @throws IllegalArgumentException if the specified data type is not 
+	 * allowed to be added to this composite data type or an invalid length is specified.
 	 */
 	private DataTypeComponent doAdd(DataType dataType, int length, boolean isFlexibleArray,
-			String componentName, String comment) {
+			String componentName, String comment) throws IllegalArgumentException {
 
 		validateDataType(dataType);
 
@@ -428,7 +479,7 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 
 	@Override
 	public DataTypeComponent insert(int index, DataType dataType, int length, String componentName,
-			String comment) {
+			String comment) throws ArrayIndexOutOfBoundsException, IllegalArgumentException {
 		if (index < 0 || index > numComponents) {
 			throw new ArrayIndexOutOfBoundsException(index);
 		}
@@ -519,7 +570,7 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	}
 
 	@Override
-	public DataTypeComponent insertBitFieldAt(int byteOffset, int byteWidth, int bitOffset,
+	public DataTypeComponentImpl insertBitFieldAt(int byteOffset, int byteWidth, int bitOffset,
 			DataType baseDataType, int bitSize, String componentName, String comment)
 			throws InvalidDataTypeException {
 
@@ -719,51 +770,49 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 
 	@Override
 	public boolean isEquivalent(DataType dataType) {
+
 		if (dataType == this) {
 			return true;
 		}
-		if (dataType == null) {
+		if (!(dataType instanceof Structure)) {
 			return false;
 		}
 
-		if (dataType instanceof Structure) {
-			Structure struct = (Structure) dataType;
-			if (isInternallyAligned() != struct.isInternallyAligned() ||
-				isDefaultAligned() != struct.isDefaultAligned() ||
-				isMachineAligned() != struct.isMachineAligned() ||
-				getMinimumAlignment() != struct.getMinimumAlignment() ||
-				getPackingValue() != struct.getPackingValue() ||
-				(!isInternallyAligned() && (getLength() != struct.getLength()))) {
-				return false;
-			}
-
-			DataTypeComponent myFlexComp = getFlexibleArrayComponent();
-			DataTypeComponent otherFlexComp = struct.getFlexibleArrayComponent();
-			if (myFlexComp != null) {
-				if (otherFlexComp == null || !myFlexComp.isEquivalent(otherFlexComp)) {
-					return false;
-				}
-			}
-			else if (otherFlexComp != null) {
-				return false;
-			}
-
-			int myNumComps = getNumComponents();
-			int otherNumComps = struct.getNumComponents();
-			if (myNumComps != otherNumComps) {
-				return false;
-			}
-			for (int i = 0; i < myNumComps; i++) {
-				DataTypeComponent myDtc = getComponent(i);
-				DataTypeComponent otherDtc = struct.getComponent(i);
-
-				if (!myDtc.isEquivalent(otherDtc)) {
-					return false;
-				}
-			}
-			return true;
+		Structure struct = (Structure) dataType;
+		if (isInternallyAligned() != struct.isInternallyAligned() ||
+			isDefaultAligned() != struct.isDefaultAligned() ||
+			isMachineAligned() != struct.isMachineAligned() ||
+			getMinimumAlignment() != struct.getMinimumAlignment() ||
+			getPackingValue() != struct.getPackingValue() ||
+			(!isInternallyAligned() && (getLength() != struct.getLength()))) {
+			return false;
 		}
-		return false;
+
+		DataTypeComponent myFlexComp = getFlexibleArrayComponent();
+		DataTypeComponent otherFlexComp = struct.getFlexibleArrayComponent();
+		if (myFlexComp != null) {
+			if (otherFlexComp == null || !myFlexComp.isEquivalent(otherFlexComp)) {
+				return false;
+			}
+		}
+		else if (otherFlexComp != null) {
+			return false;
+		}
+
+		int myNumComps = getNumComponents();
+		int otherNumComps = struct.getNumComponents();
+		if (myNumComps != otherNumComps) {
+			return false;
+		}
+		for (int i = 0; i < myNumComps; i++) {
+			DataTypeComponent myDtc = getComponent(i);
+			DataTypeComponent otherDtc = struct.getComponent(i);
+
+			if (!myDtc.isEquivalent(otherDtc)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	@Override
@@ -842,6 +891,13 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 		return available;
 	}
 
+	/**
+	 * Create copy of structure for target dtm (source archive information is discarded).
+	 * WARNING! copying unaligned structures which contain bitfields can produce
+	 * invalid results when switching endianess due to the differences in packing order.
+	 * @param dtm target data type manager
+	 * @return cloned structure
+	 */
 	@Override
 	public DataType copy(DataTypeManager dtm) {
 		StructureDataType struct = new StructureDataType(categoryPath, getName(), getLength(), dtm);
@@ -850,6 +906,13 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 		return struct;
 	}
 
+	/**
+	 * Create cloned structure for target dtm preserving source archive information.
+	 * WARNING! cloning unaligned structures which contain bitfields can produce
+	 * invalid results when switching endianess due to the differences in packing order.
+	 * @param dtm target data type manager
+	 * @return cloned structure
+	 */
 	@Override
 	public DataType clone(DataTypeManager dtm) {
 		if (dataMgr == dtm) {
@@ -902,15 +965,9 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 		int oldLength = structLength;
 
 		components.clear();
+		structLength = 0;
+		numComponents = 0;
 		flexibleArrayComponent = null;
-		if (struct.isNotYetDefined()) {
-			structLength = 0;
-			numComponents = 0;
-		}
-		else {
-			structLength = struct.getLength();
-			numComponents = isInternallyAligned() ? 0 : structLength;
-		}
 
 		setAlignment(struct);
 
@@ -943,16 +1000,19 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 		}
 	}
 
-	private void doReplaceWithUnaligned(Structure struct) {
+	private void doReplaceWithUnaligned(Structure struct) throws IllegalArgumentException {
 		// assumes components is clear and that alignment characteristics have been set.
+		if (struct.isNotYetDefined()) {
+			return;
+		}
 
-		// NOTE: unaligned bitfields should remain unchanged when
-		// transitioning endianess even though it makes little sense.
-		// Unaligned structures are not intended to be portable! 
+		structLength = struct.getLength();
+		numComponents = structLength;
 
 		DataTypeComponent[] otherComponents = struct.getDefinedComponents();
 		for (int i = 0; i < otherComponents.length; i++) {
 			DataTypeComponent dtc = otherComponents[i];
+
 			DataType dt = dtc.getDataType().clone(dataMgr);
 			checkAncestry(dt);
 
@@ -994,7 +1054,8 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	}
 
 	@Override
-	public void dataTypeReplaced(DataType oldDt, DataType replacementDt) {
+	public void dataTypeReplaced(DataType oldDt, DataType replacementDt)
+			throws IllegalArgumentException {
 		DataType newDt = replacementDt;
 		try {
 			validateDataType(replacementDt);
@@ -1117,12 +1178,9 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 
 	@Override
 	public DataTypeComponent replace(int index, DataType dataType, int length, String componentName,
-			String comment) {
+			String comment) throws ArrayIndexOutOfBoundsException, IllegalArgumentException {
 		if (index < 0 || index >= numComponents) {
 			throw new ArrayIndexOutOfBoundsException(index);
-		}
-		if (dataType instanceof BitFieldDataType) {
-			throw new IllegalArgumentException("Components may not be replaced with a bit-field");
 		}
 
 		validateDataType(dataType);
@@ -1155,16 +1213,13 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 
 	@Override
 	public DataTypeComponent replaceAtOffset(int offset, DataType dataType, int length,
-			String componentName, String comment) {
+			String componentName, String comment) throws IllegalArgumentException {
 		if (offset < 0) {
 			throw new IllegalArgumentException("Offset cannot be negative.");
 		}
 		if (offset >= structLength) {
 			throw new IllegalArgumentException(
 				"Offset " + offset + " is beyond end of structure (" + structLength + ").");
-		}
-		if (dataType instanceof BitFieldDataType) {
-			throw new IllegalArgumentException("Components may not be replaced with a bit-field");
 		}
 
 		validateDataType(dataType);
@@ -1324,7 +1379,7 @@ public class StructureDataType extends CompositeDataTypeImpl implements Structur
 	}
 
 	@Override
-	public void pack(int packingSize) throws InvalidInputException {
+	public void pack(int packingSize) {
 		setPackingValue(packingSize);
 	}
 

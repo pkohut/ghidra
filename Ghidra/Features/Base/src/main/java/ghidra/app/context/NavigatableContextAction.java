@@ -19,32 +19,38 @@ import java.util.Set;
 
 import docking.ActionContext;
 import docking.action.DockingAction;
+import docking.action.KeyBindingType;
 
 public abstract class NavigatableContextAction extends DockingAction {
 
 	public NavigatableContextAction(String name, String owner) {
 		super(name, owner);
+		setSupportsDefaultToolContext(true);
+	}
+
+	public NavigatableContextAction(String name, String owner, KeyBindingType type) {
+		super(name, owner, type);
+		setSupportsDefaultToolContext(true);
 	}
 
 	@Override
 	public boolean isEnabledForContext(ActionContext context) {
-		if (!(context instanceof NavigatableActionContext)) {
-			return false;
+		if (context instanceof NavigatableActionContext) {
+			return isEnabledForContext((NavigatableActionContext) context);
 		}
-		return isEnabledForContext((NavigatableActionContext) context);
+		return false;
 	}
 
 	@Override
 	public void actionPerformed(ActionContext context) {
-		actionPerformed((NavigatableActionContext) context);
+		if (context instanceof NavigatableActionContext) {
+			actionPerformed((NavigatableActionContext) context);
+		}
 	}
 
 	@Override
-	public boolean isValidContext(ActionContext context) {
-		if (!(context instanceof NavigatableActionContext)) {
-			return false;
-		}
-		return isValidContext((NavigatableActionContext) context);
+	public final boolean isValidContext(ActionContext context) {
+		return context instanceof NavigatableActionContext;
 	}
 
 	@Override
@@ -53,10 +59,6 @@ public abstract class NavigatableContextAction extends DockingAction {
 			return false;
 		}
 		return isAddToPopup((NavigatableActionContext) context);
-	}
-
-	protected boolean isValidContext(NavigatableActionContext context) {
-		return true;
 	}
 
 	protected boolean isEnabledForContext(NavigatableActionContext context) {

@@ -78,10 +78,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.IN);
 
 		focusVertex(v(1));
-		assertNoEdgesSelected();
+		assertNoEdgesInFocusedPath();
 
 		focusVertex(v(6));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 	}
 
 	@Test
@@ -113,10 +113,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.OUT);
 
 		focusVertex(v(1));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 
 		focusVertex(v(6));
-		assertNoEdgesSelected();
+		assertNoEdgesInFocusedPath();
 	}
 
 	@Test
@@ -148,10 +148,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.INOUT);
 
 		focusVertex(v(1));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 
 		focusVertex(v(6));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 	}
 
 	@Test
@@ -176,12 +176,12 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.CYCLE);
 
 		focusVertex(v(1));
-		assertNoEdgesSelected();
+		assertNoEdgesInFocusedPath();
 
 		focusVertex(v(2));
 
 		//@formatter:off
-		assertSelected(edge(2, 3),
+		assertInFocusedPath(edge(2, 3),
 					   edge(3, 2));
 		//@formatter:on
 	}
@@ -208,7 +208,7 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.ALLCYCLE);
 
 		//@formatter:off
-		assertSelected(edge(2, 3),
+		assertInFocusedPath(edge(2, 3),
 			   		   edge(3, 2), 
 			   		   edge(4, 5),
 			   		   edge(5, 4));
@@ -218,7 +218,7 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusVertex(v(1));
 
 		//@formatter:off
-		assertSelected(edge(2, 3),
+		assertInFocusedPath(edge(2, 3),
 			   		   edge(3, 2), 
 			   		   edge(4, 5),
 			   		   edge(5, 4));
@@ -254,13 +254,13 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.SCOPED_FORWARD);
 
 		focusVertex(v(1));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 
 		focusVertex(v(6));
-		assertNoEdgesSelected();
+		assertNoEdgesInFocusedPath();
 
 		focusVertex(v(5));
-		assertSelected(edge(v(5), v(6)));
+		assertInFocusedPath(edge(v(5), v(6)));
 	}
 
 	@Test
@@ -292,13 +292,13 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.SCOPED_REVERSE);
 
 		focusVertex(v(1));
-		assertNoEdgesSelected();
+		assertNoEdgesInFocusedPath();
 
 		focusVertex(v(6));
-		assertAllEdgesSelected();
+		assertAllEdgesInFocusedPath();
 
 		focusVertex(v(2));
-		assertSelected(edge(v(1), v(2)));
+		assertInFocusedPath(edge(v(1), v(2)));
 	}
 
 	@Test
@@ -583,7 +583,7 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		focusMode(PathHighlightMode.ALLCYCLE);
 
 		//@formatter:off
-		assertSelected(edge(2, 3),
+		assertInFocusedPath(edge(2, 3),
 			   		   edge(3, 2), 
 			   		   edge(4, 5),
 			   		   edge(5, 4));
@@ -594,7 +594,7 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		swing(() -> highlighter.clearEdgeCache());
 
 		//@formatter:off
-		assertSelected(edge(2, 3),
+		assertInFocusedPath(edge(2, 3),
 			   		   edge(3, 2), 
 			   		   edge(4, 5),
 			   		   edge(5, 4));
@@ -649,22 +649,25 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		// First, find the exact instance of the vertex in the graph, as it may have state 
 		// applied to it that we need to verify for testing.
 		//
-		LabelTestVertex v = new LabelTestVertex(Integer.toString(id));
-		Collection<AbstractTestVertex> vertices = graph.getVertices();
-		for (AbstractTestVertex vertex : vertices) {
-			if (v.equals(vertex)) {
-				return vertex;
+		AbstractTestVertex v = runSwing(() -> {
+			LabelTestVertex labelVertex = new LabelTestVertex(Integer.toString(id));
+			Collection<AbstractTestVertex> vertices = graph.getVertices();
+			for (AbstractTestVertex vertex : vertices) {
+				if (labelVertex.equals(vertex)) {
+					return vertex;
+				}
 			}
-		}
+			return labelVertex;
+		});
 
 		graph.addVertex(v);
 		return v;
 	}
 
-	private void assertSelected(TestEdge... edges) {
+	private void assertInFocusedPath(TestEdge... edges) {
 		for (TestEdge e : edges) {
-			boolean isSelected = swing(() -> e.isSelected());
-			assertTrue("Edge was not selected: " + e, isSelected);
+			boolean isFocused = swing(() -> e.isInFocusedVertexPath());
+			assertTrue("Edge was not selected: " + e, isFocused);
 		}
 	}
 
@@ -685,10 +688,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		}
 	}
 
-	private void assertNotSelected(TestEdge... edges) {
+	private void assertNotInFocusedPath(TestEdge... edges) {
 		for (TestEdge e : edges) {
-			boolean isSelected = swing(() -> e.isSelected());
-			assertFalse("Edge should not have been selected: " + e, isSelected);
+			boolean isFocused = swing(() -> e.isInFocusedVertexPath());
+			assertFalse("Edge should not have been selected: " + e, isFocused);
 		}
 	}
 
@@ -699,10 +702,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		}
 	}
 
-	private void assertNoEdgesSelected() {
+	private void assertNoEdgesInFocusedPath() {
 		Collection<TestEdge> edges = graph.getEdges();
 		TestEdge[] asArray = edges.toArray(new TestEdge[edges.size()]);
-		assertNotSelected(asArray);
+		assertNotInFocusedPath(asArray);
 	}
 
 	private void assertNoEdgesHovered() {
@@ -711,10 +714,10 @@ public class VisualGraphPathHighlighterTest extends AbstractVisualGraphTest {
 		assertNotHovered(asArray);
 	}
 
-	private void assertAllEdgesSelected() {
+	private void assertAllEdgesInFocusedPath() {
 		Collection<TestEdge> edges = graph.getEdges();
 		TestEdge[] asArray = edges.toArray(new TestEdge[edges.size()]);
-		assertSelected(asArray);
+		assertInFocusedPath(asArray);
 	}
 
 	private void assertAllEdgesHovered() {

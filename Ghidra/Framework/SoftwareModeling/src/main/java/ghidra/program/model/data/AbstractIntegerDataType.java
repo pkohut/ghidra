@@ -18,10 +18,10 @@ package ghidra.program.model.data;
 import java.math.BigInteger;
 
 import ghidra.docking.settings.*;
-import ghidra.program.model.mem.ByteMemBufferImpl;
 import ghidra.program.model.mem.MemBuffer;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.util.StringFormat;
+import utilities.util.ArrayUtilities;
 
 /**
  * Base type for integer data types such as {@link CharDataType chars}, {@link IntegerDataType ints},
@@ -32,8 +32,6 @@ import ghidra.util.StringFormat;
  * treat an array of this data type as a string.
  */
 public abstract class AbstractIntegerDataType extends BuiltIn implements ArrayStringable {
-
-	private static final long serialVersionUID = 1L;
 
 	static final String C_SIGNED_CHAR = "signed char";
 	static final String C_UNSIGNED_CHAR = "unsigned char";
@@ -59,7 +57,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	/**
 	 * Constructor
 	 * @param name a unique signed/unsigned data-type name (also used as the mnemonic)
-	 * @param signed
+	 * @param signed true if signed, false if unsigned
 	 * @param dtm data-type manager whose data organization should be used
 	 */
 	public AbstractIntegerDataType(String name, boolean signed, DataTypeManager dtm) {
@@ -92,7 +90,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	}
 
 	/**
-	 * Returns true if this is a signed integer data-type
+	 * @return true if this is a signed integer data-type
 	 */
 	public boolean isSigned() {
 		return signed;
@@ -116,7 +114,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	}
 
 	/**
-	 * Returns the Assembly style data-type declaration
+	 * @return the Assembly style data-type declaration
 	 * for this data-type.
 	 */
 	public String getAssemblyMnemonic() {
@@ -124,7 +122,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	}
 
 	/**
-	 * Returns the C style data-type mnemonic
+	 * @return the C style data-type mnemonic
 	 * for this data-type.
 	 * NOTE: currently the same as getCDeclaration().
 	 */
@@ -134,7 +132,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	}
 
 	/**
-	 * Returns the C style data-type declaration
+	 * @return the C style data-type declaration
 	 * for this data-type.  Null is returned if
 	 * no appropriate declaration exists.
 	 */
@@ -162,28 +160,6 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 		return null;
 	}
 
-	/**
-	 * Get the value of integer data as a BigInteger
-	 * @param buf the data buffer.
-	 * @param settings the settings to use.
-	 * @return BigInteger data value
-	 */
-	public BigInteger getBigIntegerValue(MemBuffer buf, Settings settings) {
-		Object value = getValue(buf, settings, getLength());
-		if (value instanceof Scalar) {
-			Scalar s = (Scalar) value;
-			return s.getBigInteger();
-		}
-		if (value instanceof BigInteger) {
-			return (BigInteger) value;
-		}
-		if (value instanceof Character) {
-			// FIXME: consider flipping around getValue and getBigIntegerValue
-			return BigInteger.valueOf((Character) value);
-		}
-		return null;
-	}
-
 	@Override
 	public Object getValue(MemBuffer buf, Settings settings, int length) {
 
@@ -197,14 +173,8 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 			return null;
 		}
 
-		boolean isBigEndian = ENDIAN.isBigEndian(settings, buf);
-
-		if (!isBigEndian) {
-			byte[] flipped = new byte[size];
-			for (int i = 0; i < size; i++) {
-				flipped[i] = bytes[size - i - 1];
-			}
-			bytes = flipped;
+		if (!ENDIAN.isBigEndian(settings, buf)) {
+			bytes = ArrayUtilities.reverse(bytes);
 		}
 
 		if (size > 8) {
@@ -233,9 +203,6 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 		return Scalar.class;
 	}
 
-	/**
-	 * @see ghidra.program.model.data.DataType#getRepresentation(ghidra.program.model.mem.MemBuffer, ghidra.docking.settings.Settings, int)
-	 */
 	@Override
 	public String getRepresentation(MemBuffer buf, Settings settings, int length) {
 
@@ -252,26 +219,30 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 			return "??";
 		}
 
-		boolean isBigEndian = ENDIAN.isBigEndian(settings, buf);
-
-		if (!isBigEndian) {
-			byte[] flipped = new byte[size];
-			for (int i = 0; i < size; i++) {
-				flipped[i] = bytes[size - i - 1];
-			}
-			bytes = flipped;
+		if (!ENDIAN.isBigEndian(settings, buf)) {
+			bytes = ArrayUtilities.reverse(bytes);
 		}
 
-		return getRepresentation(new BigInteger(bytes), settings, 8 * length);
+		BigInteger value = new BigInteger(bytes);
+
+		if (getFormatSettingsDefinition().getFormat(settings) == FormatSettingsDefinition.CHAR) {
+			return StringDataInstance.getCharRepresentation(this, bytes, settings);
+		}
+
+		return getRepresentation(value, settings, 8 * length);
 	}
 
 	/**
 	 * Get integer representation of the big-endian value.
+	 * <p>
+	 * Does not handle CHAR format, use {@link StringDataInstance#getCharRepresentation(DataType, byte[], Settings)}
+	 * 
 	 * @param bigInt BigInteger value with the appropriate sign
 	 * @param settings integer format settings (PADDING, FORMAT, etc.)
+	 * @param bitLength number of value bits to be used from bigInt
 	 * @return formatted integer string
 	 */
-	public String getRepresentation(BigInteger bigInt, Settings settings, int bitLength) {
+	/*package*/ String getRepresentation(BigInteger bigInt, Settings settings, int bitLength) {
 
 		int format = getFormatSettingsDefinition().getFormat(settings);
 		boolean padded = PADDING.isPadded(settings);
@@ -283,29 +254,8 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 			bigInt = bigInt.add(BigInteger.valueOf(2).pow(bitLength));
 		}
 
-		int nominalLen;
-
-		if (format == FormatSettingsDefinition.CHAR) {
-			int charSize = Math.min(getDataOrganization().getCharSize(), getLength());
-			nominalLen = (bitLength + 7) / 8;
-			byte[] bytes = bigInt.toByteArray();
-			if (bytes.length > nominalLen) {
-				// BigInteger supplied too many bytes
-				byte[] chars = new byte[nominalLen];
-				System.arraycopy(bytes, bytes.length - nominalLen, chars, 0, nominalLen);
-				bytes = chars;
-			}
-			else if (bytes.length < nominalLen) {
-				// BigInteger supplied too few bytes
-				byte[] chars = new byte[nominalLen];
-				System.arraycopy(bytes, 0, chars, nominalLen - bytes.length, bytes.length);
-				bytes = chars;
-			}
-			MemBuffer memBuf = new ByteMemBufferImpl(null, bytes, true);
-			return new StringDataInstance(this, settings, memBuf, charSize).getCharRepresentation();
-		}
-
 		String valStr;
+		int nominalLen;
 
 		switch (format) {
 			default:
@@ -342,7 +292,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	public String getArrayDefaultLabelPrefix(MemBuffer buf, Settings settings, int len,
 			DataTypeDisplayOptions options) {
 		if (hasStringValue(settings) && buf.isInitializedMemory()) {
-			return new StringDataInstance(this, settings, buf, len).getLabel(
+			return new StringDataInstance(this, settings, buf, len, true).getLabel(
 				AbstractStringDataType.DEFAULT_ABBREV_PREFIX + "_",
 				AbstractStringDataType.DEFAULT_LABEL_PREFIX, AbstractStringDataType.DEFAULT_LABEL,
 				options);
@@ -354,7 +304,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	public String getArrayDefaultOffcutLabelPrefix(MemBuffer buf, Settings settings, int len,
 			DataTypeDisplayOptions options, int offcutOffset) {
 		if (hasStringValue(settings) && buf.isInitializedMemory()) {
-			return new StringDataInstance(this, settings, buf, len).getOffcutLabelString(
+			return new StringDataInstance(this, settings, buf, len, true).getOffcutLabelString(
 				AbstractStringDataType.DEFAULT_ABBREV_PREFIX + "_",
 				AbstractStringDataType.DEFAULT_LABEL_PREFIX, AbstractStringDataType.DEFAULT_LABEL,
 				options, offcutOffset);
@@ -382,7 +332,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	 * the element at index <code>i</code> points to the datatype of size <code>i+1</code>,
 	 * with additional types with no size restriction appended after the first 8.
 	 *
-	 * @return
+	 * @return array of all signed integer types (char and bool types excluded)
 	 */
 	private static AbstractIntegerDataType[] getSignedTypes() {
 		if (signedTypes == null) {
@@ -400,7 +350,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	 * the element at index <code>i</code> points to the datatype of size <code>i+1</code>,
 	 * with additional types with no size restriction appended after the first 8.
 	 *
-	 * @return
+	 * @return array of all unsigned integer types (char and bool types excluded)
 	 */
 	private static AbstractIntegerDataType[] getUnsignedTypes() {
 		if (unsignedTypes == null) {
@@ -455,6 +405,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	 * Returns all built-in signed integer data-types.
 	 * @param dtm optional program data-type manager, if specified
 	 * generic data-types will be returned in place of fixed-sized data-types.
+	 * @return array of all signed integer types (char and bool types excluded)
 	 */
 	public static AbstractIntegerDataType[] getSignedDataTypes(DataTypeManager dtm) {
 		AbstractIntegerDataType[] dataTypes = getSignedTypes().clone();
@@ -524,6 +475,7 @@ public abstract class AbstractIntegerDataType extends BuiltIn implements ArraySt
 	 * Returns all built-in unsigned integer data-types
 	 * @param dtm optional program data-type manager, if specified
 	 * generic data-types will be returned in place of fixed-sized data-types.
+	 * @return array of all unsigned integer types (char and bool types excluded)
 	 */
 	public static AbstractIntegerDataType[] getUnsignedDataTypes(DataTypeManager dtm) {
 		AbstractIntegerDataType[] dataTypes = getUnsignedTypes().clone();

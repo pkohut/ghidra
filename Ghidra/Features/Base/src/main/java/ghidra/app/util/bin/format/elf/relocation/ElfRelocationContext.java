@@ -43,12 +43,9 @@ public class ElfRelocationContext {
 	/**
 	 * Relocation context for a specific Elf image and relocation table
 	 * @param handler relocation handler or null if not available
-	 * @param elf Elf header
+	 * @param loadHelper the elf load helper
 	 * @param relocationTable Elf relocation table
 	 * @param symbolMap Elf symbol placement map
-	 * @param nextFreeAddress next available address to be used by relocations if needed (e.g., 
-	 * synthetic GOT, EXTERNAL block, etc.)
-	 * @param program Target program
 	 */
 	protected ElfRelocationContext(ElfRelocationHandler handler, ElfLoadHelper loadHelper,
 			ElfRelocationTable relocationTable, Map<ElfSymbol, Address> symbolMap) {
@@ -260,6 +257,16 @@ public class ElfRelocationContext {
 		catch (DuplicateNameException | NotEmptyException | NotFoundException e) {
 			Msg.error(this, "Failed to reconcile extended EXTERNAL block fragment");
 		}
+	}
+
+	/**
+	 * Get relocation address
+	 * @param baseAddress base address
+	 * @param relocOffset relocation offset relative to baseAddress
+	 * @return relocation address
+	 */
+	public Address getRelocationAddress(Address baseAddress, long relocOffset) {
+		return baseAddress.addWrap(relocOffset);
 	}
 
 }

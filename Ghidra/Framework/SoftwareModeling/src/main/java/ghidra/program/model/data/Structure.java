@@ -17,8 +17,6 @@ package ghidra.program.model.data;
 
 import java.util.Comparator;
 
-import ghidra.util.exception.InvalidInputException;
-
 /**
  * The structure interface.
  * <p>
@@ -127,7 +125,7 @@ public interface Structure extends Composite {
 	 * <p>
 	 * Zero length bitfields may be inserted although they have no real affect for 
 	 * unaligned structures.  Only the resulting byte offset within the structure 
-	 * is of significance in determining its' ordinal placement.
+	 * is of significance in determining its ordinal placement.
 	 * <p> 
 	 * @param byteOffset the first byte offset within this structure which corresponds to the
 	 * first byte of the specified storage unit identified by its byteWidth.
@@ -166,7 +164,8 @@ public interface Structure extends Composite {
 	 * For example, suppose dt1 contains dt2. Therefore it is not valid
 	 * to insert dt1 to dt2 since this would cause a cyclic dependency.
 	 */
-	public DataTypeComponent insertAtOffset(int offset, DataType dataType, int length);
+	public DataTypeComponent insertAtOffset(int offset, DataType dataType, int length)
+			throws IllegalArgumentException;
 
 	/**
 	 * Inserts a new datatype at the specified offset into this structure.
@@ -185,7 +184,7 @@ public interface Structure extends Composite {
 	 * to insert dt1 to dt2 since this would cause a cyclic dependency.
 	 */
 	public DataTypeComponent insertAtOffset(int offset, DataType dataType, int length, String name,
-			String comment);
+			String comment) throws IllegalArgumentException;
 
 	/**
 	 * Deletes the component containing the specified offset in this structure.  If the offset
@@ -196,9 +195,8 @@ public interface Structure extends Composite {
 	public void deleteAtOffset(int offset);
 
 	/**
-	 * Remove all components from this structure, effectively setting the
-	 * length to zero.
-	 *
+	 * Remove all components from this structure (including flex-array), 
+	 * effectively setting the length to zero.
 	 */
 	public void deleteAll();
 
@@ -209,7 +207,7 @@ public interface Structure extends Composite {
 	 * @param index the index of the component to clear.
 	 * @throws ArrayIndexOutOfBoundsException if component ordinal is out of bounds
 	 */
-	public void clearComponent(int index);
+	public void clearComponent(int index) throws ArrayIndexOutOfBoundsException;
 
 	/**
 	 * Replaces the component at the given component index with a new component
@@ -225,10 +223,11 @@ public interface Structure extends Composite {
 	 * For example, suppose dt1 contains dt2. Therefore it is not valid
 	 * to replace a dt2 component with dt1 since this would cause a cyclic 
 	 * dependency.  In addition, any attempt to replace an existing bit-field
-	 * component or specify a {@link BitFieldDatatype} will produce this error.
+	 * component or specify a {@link BitFieldDataType} will produce this error.
 	 * @throws ArrayIndexOutOfBoundsException if component index is out of bounds
 	 */
-	public DataTypeComponent replace(int index, DataType dataType, int length);
+	public DataTypeComponent replace(int index, DataType dataType, int length)
+			throws ArrayIndexOutOfBoundsException, IllegalArgumentException;
 
 	/**
 	 * Replaces the component at the given component index with a new component
@@ -246,11 +245,11 @@ public interface Structure extends Composite {
 	 * For example, suppose dt1 contains dt2. Therefore it is not valid
 	 * to replace a dt2 component with dt1 since this would cause a cyclic 
 	 * dependency.  In addition, any attempt to replace an existing bit-field
-	 * component or specify a {@link BitFieldDatatype} will produce this error.
+	 * component or specify a {@link BitFieldDataType} will produce this error.
 	 * @throws ArrayIndexOutOfBoundsException if component index is out of bounds
 	 */
 	public DataTypeComponent replace(int index, DataType dataType, int length, String name,
-			String comment);
+			String comment) throws ArrayIndexOutOfBoundsException, IllegalArgumentException;
 
 	/**
 	 * Replaces the component at the specified byte offset with a new component
@@ -272,24 +271,10 @@ public interface Structure extends Composite {
 	 * For example, suppose dt1 contains dt2. Therefore it is not valid
 	 * to replace a dt2 component with dt1 since this would cause a cyclic 
 	 * dependency.  In addition, any attempt to replace an existing bit-field
-	 * component or specify a {@link BitFieldDatatype} will produce this error.
+	 * component or specify a {@link BitFieldDataType} will produce this error.
 	 */
 	public DataTypeComponent replaceAtOffset(int offset, DataType dataType, int length, String name,
-			String comment);
-
-	/**
-	 * Returns a list of all components that make up this data type excluding any trailing
-	 * flexible array component if present.
-	 * @return an array containing the components
-	 */
-	@Override
-	public abstract DataTypeComponent[] getComponents();
-
-	/**
-	 * Returns the list of components that are defined. (As opposed to "filler"
-	 * undefined bytes.).  Any trailing flexible array component will be omitted.
-	 */
-	public DataTypeComponent[] getDefinedComponents();
+			String comment) throws IllegalArgumentException;
 
 	/**
 	 * Determine if a trailing flexible array component has been defined.
@@ -310,9 +295,11 @@ public interface Structure extends Composite {
 	 * @param name component field name or null for default name
 	 * @param comment component comment
 	 * @return updated flexible array component
+	 * @throws IllegalArgumentException if specified flexType is not permitted (e.g., 
+	 * self referencing or unsupported type)
 	 */
 	public DataTypeComponent setFlexibleArrayComponent(DataType flexType, String name,
-			String comment);
+			String comment) throws IllegalArgumentException;
 
 	/**
 	 * Remove the optional trailing flexible array component associated with this structure.
@@ -320,35 +307,27 @@ public interface Structure extends Composite {
 	public void clearFlexibleArrayComponent();
 
 	/**
-	 * Gets the number of component data types in this data type excluding any trailing flexible
-	 * array component if present. 
-	 * @return the number of components that make up this data prototype
-	 */
-	@Override
-	public abstract int getNumComponents();
-
-	/**
-	 * Returns the number of non-undefined components in this composite. For example, say
-	 * a structure has an int (4 bytes) at offset 0 and another int at offset 8.  This structure
-	 * would have 6 total components (one for each undefined between the two ints), but only
-	 * 2 defined components. Any trailing flexible array component will not be included in this count.
-	 * @return  the number of non-undefined components in this composite
-	 */
-	public abstract int getNumDefinedComponents();
-
-	/**
 	 * Increases the size of the structure by the given amount by adding undefined datatypes
 	 * at the end of the structure.
 	 * @param amount the amount by which to grow the structure.
-	 * @throws IllegalArgumentException if amount < 1
+	 * @throws IllegalArgumentException if amount &lt; 1
 	 */
 	public void growStructure(int amount);
 
-	public void pack(int maxAlignment) throws InvalidInputException;
+	/**
+	 * Sets the current packing value (usually a power of 2). A value of NOT_PACKING should be passed 
+	 * if this isn't a packed data type. Otherwise this value indicates a maximum alignment
+	 * for any component within this data type. Calling this method will cause the data type to
+	 * become an internally aligned data type.
+	 * (Same as {@link Composite#setPackingValue(int)})
+	 * @param maxAlignment the new packing value or 0 for NOT_PACKING.
+	 * A negative value will be treated the same as 0.
+	 */
+	public void pack(int maxAlignment);
 
 	/**
 	 * <code>BitOffsetComparator</code> provides ability to compare an normalized bit offset
-	 * (see {@link #getNormalizedBitfieldOffset(int, int, int, int, boolean)} with a
+	 * (see {@link #getNormalizedBitfieldOffset(int, int, int, int, boolean)}) with a
 	 * {@link DataTypeComponent} object.  The offset will be considered equal (0) if the component 
 	 * contains the offset.  A normalized component bit numbering is used to establish the footprint
 	 * of each component with an ordinal-based ordering (assumes specific LE/BE allocation rules).  
@@ -359,6 +338,7 @@ public interface Structure extends Composite {
 	 * storage unit (assumes lsb-allocated-first).  Both cases result in a normalized view where 
 	 * normalized bit-0 is allocated first.
 	 * 
+	 * <pre>{@literal
 	 * Example:
 	 *    
 	 * Big-Endian (normalized view):
@@ -371,6 +351,7 @@ public interface Structure extends Composite {
 	 *    | . . . . . . 6 7 | 8 . . . . . . . |
 	 *    |------------>|                       bit-offset (6, lsb position within storage unit)
 	 *                  |<--->|                 bit-size (3)
+	 * }</pre>
 	 */
 	public static class BitOffsetComparator implements Comparator<Object> {
 

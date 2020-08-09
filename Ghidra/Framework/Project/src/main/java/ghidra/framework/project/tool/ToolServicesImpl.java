@@ -21,6 +21,8 @@ import java.util.*;
 import org.jdom.Document;
 import org.jdom.output.XMLOutputter;
 
+import docking.widgets.OptionDialog;
+import docking.widgets.filechooser.GhidraFileChooser;
 import ghidra.framework.ToolUtils;
 import ghidra.framework.data.ContentHandler;
 import ghidra.framework.data.DomainObjectAdapter;
@@ -30,6 +32,8 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.framework.preferences.Preferences;
 import ghidra.util.Msg;
 import ghidra.util.classfinder.ClassSearcher;
+import ghidra.util.filechooser.GhidraFileChooserModel;
+import ghidra.util.filechooser.GhidraFileFilter;
 import ghidra.util.xml.GenericXMLOutputter;
 
 /**
@@ -56,39 +60,97 @@ class ToolServicesImpl implements ToolServices {
 	}
 
 	@Override
-	public void closeTool(Tool tool) {
+	public void closeTool(PluginTool tool) {
 		toolManager.closeTool(tool);
 	}
 
 	@Override
-	public void exportTool(File location, Tool tool) throws FileNotFoundException, IOException {
+	public File exportTool(ToolTemplate tool) throws FileNotFoundException, IOException {
+
+		File location = chooseToolFile(tool);
+		if (location == null) {
+			return location; // user cancelled
+		}
 
 		String filename = location.getName();
-		if (filename.endsWith(".tool")) {
-			filename = filename.substring(0, filename.length() - 5);
+		if (!filename.endsWith(ToolUtils.TOOL_EXTENSION)) {
+			filename = filename + ToolUtils.TOOL_EXTENSION;
 		}
 
-		FileOutputStream f =
-			new FileOutputStream(location.getParent() + File.separator + filename + ".tool");
-		BufferedOutputStream bf = new BufferedOutputStream(f);
-
-		ToolTemplate template = tool.getToolTemplate(false);
-
-		Document doc = new Document(template.saveToXml());
-
-		XMLOutputter xmlout = new GenericXMLOutputter();
-		try {
+		try (FileOutputStream f =
+			new FileOutputStream(location.getParent() + File.separator + filename)) {
+			BufferedOutputStream bf = new BufferedOutputStream(f);
+			Document doc = new Document(tool.saveToXml());
+			XMLOutputter xmlout = new GenericXMLOutputter();
 			xmlout.output(doc, bf);
 		}
-		catch (IOException ioe) {
-			Msg.error(this, "Unexpected exception exporting tool", ioe);
+
+		return location;
+	}
+
+	private File chooseToolFile(ToolTemplate tool) {
+		GhidraFileChooser fileChooser = getFileChooser();
+
+		File exportFile = null;
+		while (exportFile == null) {
+			exportFile = fileChooser.getSelectedFile(); // show the chooser
+			if (exportFile == null) {
+				return null; // user cancelled
+			}
+
+			Preferences.setProperty(Preferences.LAST_TOOL_EXPORT_DIRECTORY, exportFile.getParent());
+			if (!exportFile.getName().endsWith(ToolUtils.TOOL_EXTENSION)) {
+				exportFile = new File(exportFile.getAbsolutePath() + ToolUtils.TOOL_EXTENSION);
+			}
+
+			if (exportFile.exists()) {
+				int result = OptionDialog.showOptionDialog(null, "Overwrite?",
+					"Overwrite existing file: '" + exportFile.getName() + "'?", "Overwrite",
+					OptionDialog.QUESTION_MESSAGE);
+				if (result != OptionDialog.OPTION_ONE) {
+					exportFile = null; // user chose not to overwrite
+				}
+			}
 		}
 
-		f.close();
+		return exportFile;
+	}
+
+	private GhidraFileChooser getFileChooser() {
+		GhidraFileChooser newFileChooser = new GhidraFileChooser(null);
+		newFileChooser.setFileFilter(new GhidraFileFilter() {
+			@Override
+			public boolean accept(File file, GhidraFileChooserModel model) {
+				if (file == null) {
+					return false;
+				}
+
+				if (file.isDirectory()) {
+					return true;
+				}
+
+				return file.getAbsolutePath().toLowerCase().endsWith("tool");
+			}
+
+			@Override
+			public String getDescription() {
+				return "Tools";
+			}
+		});
+
+		String exportDir = Preferences.getProperty(Preferences.LAST_TOOL_EXPORT_DIRECTORY);
+		if (exportDir != null) {
+			newFileChooser.setCurrentDirectory(new File(exportDir));
+		}
+
+		newFileChooser.setTitle("Export Tool");
+		newFileChooser.setApproveButtonText("Export");
+
+		return newFileChooser;
 	}
 
 	@Override
-	public void saveTool(Tool tool) {
+	public void saveTool(PluginTool tool) {
 		boolean toolChanged = tool.hasConfigChanged();
 		ToolTemplate template = tool.saveToolToToolTemplate();
 		toolManager.toolSaved(tool, toolChanged);
@@ -102,10 +164,10 @@ class ToolServicesImpl implements ToolServices {
 	}
 
 	@Override
-	public void displaySimilarTool(Tool tool, DomainFile domainFile, PluginEvent event) {
+	public void displaySimilarTool(PluginTool tool, DomainFile domainFile, PluginEvent event) {
 
-		Tool[] similarTools = getSameNamedRunningTools(tool);
-		Tool matchingTool = findToolUsingFile(similarTools, domainFile);
+		PluginTool[] similarTools = getSameNamedRunningTools(tool);
+		PluginTool matchingTool = findToolUsingFile(similarTools, domainFile);
 		if (matchingTool != null) {
 			// Bring the matching tool forward.
 			matchingTool.toFront();
@@ -123,11 +185,11 @@ class ToolServicesImpl implements ToolServices {
 	}
 
 	@Override
-	public Tool launchDefaultTool(DomainFile domainFile) {
+	public PluginTool launchDefaultTool(DomainFile domainFile) {
 		ToolTemplate template = getDefaultToolTemplate(domainFile);
 		if (template != null) {
 			Workspace workspace = toolManager.getActiveWorkspace();
-			Tool tool = workspace.runTool(template);
+			PluginTool tool = workspace.runTool(template);
 			tool.setVisible(true);
 			if (domainFile != null) {
 				tool.acceptDomainFiles(new DomainFile[] { domainFile });
@@ -138,11 +200,11 @@ class ToolServicesImpl implements ToolServices {
 	}
 
 	@Override
-	public Tool launchTool(String toolName, DomainFile domainFile) {
+	public PluginTool launchTool(String toolName, DomainFile domainFile) {
 		ToolTemplate template = findToolChestToolTemplate(toolName);
 		if (template != null) {
 			Workspace workspace = toolManager.getActiveWorkspace();
-			Tool tool = workspace.runTool(template);
+			PluginTool tool = workspace.runTool(template);
 			tool.setVisible(true);
 			if (domainFile != null) {
 				tool.acceptDomainFiles(new DomainFile[] { domainFile });
@@ -328,7 +390,7 @@ class ToolServicesImpl implements ToolServices {
 		}
 
 		contentHandlers = new HashSet<>();
-		Set<ContentHandler> instances = ClassSearcher.getInstances(ContentHandler.class);
+		List<ContentHandler> instances = ClassSearcher.getInstances(ContentHandler.class);
 		for (ContentHandler contentHandler : instances) {
 			// a bit of validation
 			String contentType = contentHandler.getContentType();
@@ -389,20 +451,20 @@ class ToolServicesImpl implements ToolServices {
 	 * 
 	 * @return array of tools that are running and named the same as this one.
 	 */
-	private Tool[] getSameNamedRunningTools(Tool tool) {
+	private PluginTool[] getSameNamedRunningTools(PluginTool tool) {
 		String toolName = tool.getToolName();
-		Tool[] tools = toolManager.getRunningTools();
-		List<Tool> toolList = new ArrayList<>(tools.length);
-		for (Tool element : tools) {
+		PluginTool[] tools = toolManager.getRunningTools();
+		List<PluginTool> toolList = new ArrayList<>(tools.length);
+		for (PluginTool element : tools) {
 			if (toolName.equals(element.getToolName())) {
 				toolList.add(element);
 			}
 		}
-		return toolList.toArray(new Tool[toolList.size()]);
+		return toolList.toArray(new PluginTool[toolList.size()]);
 	}
 
 	@Override
-	public Tool[] getRunningTools() {
+	public PluginTool[] getRunningTools() {
 		return toolManager.getRunningTools();
 	}
 
@@ -414,8 +476,8 @@ class ToolServicesImpl implements ToolServices {
 	 * 
 	 * @return first tool found to be using the domainFile
 	 */
-	private Tool findToolUsingFile(Tool[] tools, DomainFile domainFile) {
-		Tool matchingTool = null;
+	private PluginTool findToolUsingFile(PluginTool[] tools, DomainFile domainFile) {
+		PluginTool matchingTool = null;
 		for (int toolNum = 0; (toolNum < tools.length) && (matchingTool == null); toolNum++) {
 			PluginTool pTool = (PluginTool) tools[toolNum];
 			// Is this tool the same as the type we are in.
@@ -431,7 +493,7 @@ class ToolServicesImpl implements ToolServices {
 	}
 
 	@Override
-	public boolean canAutoSave(Tool tool) {
+	public boolean canAutoSave(PluginTool tool) {
 		return toolManager.canAutoSave(tool);
 	}
 }

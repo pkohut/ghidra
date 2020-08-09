@@ -25,6 +25,7 @@ import java.nio.file.FileSystem;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.*;
+import java.util.function.Consumer;
 
 import generic.jar.ResourceFile;
 import ghidra.util.*;
@@ -160,9 +161,8 @@ public final class FileUtilities {
 		}
 		byte[] data = new byte[(int) length];
 
-		InputStream fis = sourceFile.getInputStream();
 
-		try {
+		try (InputStream fis = sourceFile.getInputStream()) {
 			if (fis.skip(offset) != offset) {
 				throw new IOException("Did not skip to the specified offset!");
 			}
@@ -173,12 +173,15 @@ public final class FileUtilities {
 			}
 			return data;
 		}
-		finally {
-			fis.close();
-		}
 	}
 
-	public static byte[] getBytes(InputStream is) throws IOException {
+	/**
+	 * Reads the bytes from the stream into a byte array
+	 * @param is the input stream to read
+	 * @return a byte[] containing the bytes from the stream.
+	 * @throws IOException if an I/O error occurs reading
+	 */
+	public static byte[] getBytesFromStream(InputStream is) throws IOException {
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
 		byte[] bytes = new byte[4096];
 		int n;
@@ -254,15 +257,11 @@ public final class FileUtilities {
 	public final static void copyFile(ResourceFile fromFile, File toFile, boolean append,
 			TaskMonitor monitor) throws IOException {
 
-		InputStream fin = fromFile.getInputStream();
-		try {
+		try (InputStream fin = fromFile.getInputStream()) {
 			if (monitor != null) {
 				monitor.initialize((int) fromFile.length());
 			}
 			copyStreamToFile(fin, toFile, append, monitor);
-		}
-		finally {
-			fin.close();
 		}
 	}
 
@@ -278,25 +277,13 @@ public final class FileUtilities {
 	public final static void copyFile(ResourceFile fromFile, ResourceFile toFile,
 			TaskMonitor monitor) throws IOException {
 
-		InputStream fin = null;
-		OutputStream out = null;
-		try {
-			fin = fromFile.getInputStream();
-			out = toFile.getOutputStream();
+		try (InputStream fin = fromFile.getInputStream();
+				OutputStream out = toFile.getOutputStream()) {
 
 			if (monitor != null) {
 				monitor.initialize((int) fromFile.length());
 			}
 			copyStreamToStream(fin, out, monitor);
-		}
-		finally {
-			if (fin != null) {
-				fin.close();
-			}
-
-			if (out != null) {
-				out.close();
-			}
 		}
 	}
 
@@ -352,7 +339,7 @@ public final class FileUtilities {
 	 * <p>
 	 * Throws an {@link IOException} if there is any problem while creating the directory.
 	 * <p>
-	 * Does not create any missing parent directories.  See {@link #checkMkdirs(File)} instead.
+	 * Does not create any missing parent directories.  See {@link #checkedMkdirs(File)} instead.
 	 * <p>
 	 * Takes into account race conditions with external threads/processes
 	 * creating the same directory at the same time.
@@ -462,19 +449,19 @@ public final class FileUtilities {
 			return dir.delete();
 		}
 
-		for (int i = 0; i < files.length; i++) {
+		for (File file : files) {
 			monitor.checkCanceled();
-			if (files[i].isDirectory()) {
+			if (file.isDirectory()) {
 				// use a dummy monitor as not to ruin our progress
-				if (!doDeleteDir(files[i], monitor)) {
-					printDebug("Unable to delete directory: " + files[i]);
+				if (!doDeleteDir(file, monitor)) {
+					printDebug("Unable to delete directory: " + file);
 					return false;
 				}
 			}
 			else {
-				monitor.setMessage("Deleting file: " + files[i]);
-				if (!files[i].delete()) {
-					printDebug("Unable to delete file: " + files[i]);
+				monitor.setMessage("Deleting file: " + file);
+				if (!file.delete()) {
+					printDebug("Unable to delete file: " + file);
 					return false;
 				}
 			}
@@ -492,13 +479,16 @@ public final class FileUtilities {
 	}
 
 	/**
-	 * Copies the contents of <tt>originalDir</tt> to <tt>copyDir</tt>.  If the <tt>originalDir</tt>
-	 * does not exist, then this method will do nothing.  If <tt>copyDir</tt> does not exist, then
+	 * Copies the contents of <code>originalDir</code> to <code>copyDir</code>.  If the <code>originalDir</code>
+	 * does not exist, then this method will do nothing.  If <code>copyDir</code> does not exist, then
 	 * it will be created as necessary.
 	 *
 	 * @param originalDir The directory from which to extract contents
 	 * @param copyDir The directory in which the extracted contents will be placed
-	 * @param fileFilte a filter to apply against the directory's contents
+	 * @param filter a filter to apply against the directory's contents
+	 * @param monitor the task monitor
+	 * @throws IOException if there was a problem accessing the files
+	 * @throws CancelledException if the copy is cancelled
 	 */
 	public final static int copyDir(File originalDir, File copyDir, FileFilter filter,
 			TaskMonitor monitor) throws IOException, CancelledException {
@@ -607,7 +597,7 @@ public final class FileUtilities {
 	/**
 	 * Copy the contents of the specified fromFile to the out stream.
 	 * @param fromFile file data source
-	 * @param toFile destination stream
+	 * @param out destination stream
 	 * @param monitor if specified the progress will be reset and will advance to
 	 * 100% when the copy is complete.
 	  * @throws IOException thrown if there was a problem accessing the files
@@ -615,23 +605,16 @@ public final class FileUtilities {
 	public final static void copyFileToStream(File fromFile, OutputStream out, TaskMonitor monitor)
 			throws IOException {
 
-		InputStream fin = null;
-		try {
-			fin = new FileInputStream(fromFile);
+		try (InputStream fin = new FileInputStream(fromFile)) {
 			if (monitor != null) {
 				monitor.initialize((int) fromFile.length());
 			}
 			copyStreamToStream(fin, out, monitor);
 		}
-		finally {
-			if (fin != null) {
-				fin.close();
-			}
-		}
 	}
 
 	/**
-	 * Copy the <tt>in</tt> stream to the <tt>out</tt> stream.  The output stream will
+	 * Copy the <code>in</code> stream to the <code>out</code> stream.  The output stream will
 	 * <b>not</b> be closed when the copy operation is finished.
 	 *
 	 * @param in source input stream
@@ -677,13 +660,11 @@ public final class FileUtilities {
 	 * <p>
 	 * @param file The text file to read in
 	 * @return a list of file lines
-	 * @throws IOException
+	 * @throws IOException if an error occurs trying to read the file.
 	 */
 	public static List<String> getLines(ResourceFile file) throws IOException {
-		try {
-			BufferedReader in = new BufferedReader(
-				new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8));
-			return getLines(in);
+		try (InputStream is = file.getInputStream()) {
+			return getLines(is);
 		}
 		catch (FileNotFoundException exc) {
 			return new ArrayList<>();
@@ -713,9 +694,9 @@ public final class FileUtilities {
 	 * <p>
 	 * The file is treated as UTF-8 encoded.
 	 * <p>
-	 * @param is the input stream from which to read
+	 * @param url the input stream from which to read
 	 * @return a list of file lines
-	 * @throws IOException
+	 * @throws IOException thrown if there was a problem accessing the files
 	 */
 	public static List<String> getLines(URL url) throws IOException {
 
@@ -727,14 +708,13 @@ public final class FileUtilities {
 	/**
 	 * Returns all of the lines in the given {@link InputStream} without any newline characters.
 	 * <p>
-	 * <b>The input stream is closed as a side-effect.</b>
-	 * 
-	 * @param is the input stream from which to read, as a side effect, it is closed
+	 *
+	 * @param is the input stream from which to read
 	 * @return a {@link List} of strings representing the text lines of the file
 	 * @throws IOException if there are any issues reading the file
 	 */
 	public static List<String> getLines(InputStream is) throws IOException {
-		return getLines(new BufferedReader(new InputStreamReader(is)));
+		return getLines(new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8)));
 	}
 
 	/**
@@ -742,9 +722,7 @@ public final class FileUtilities {
 	 * <p>
 	 * EOL characters are normalized to simple '\n's.
 	 * <p>
-	 * <b>The input stream is closed as a side-effect.</b>
-	 * <p>
-	 * @param is the input stream from which to read, as a side effect, it is closed
+	 * @param is the input stream from which to read
 	 * @return the content as a String
 	 * @throws IOException if there are any issues reading the file
 	 */
@@ -778,30 +756,18 @@ public final class FileUtilities {
 
 	/**
 	 * Returns all of the lines in the {@link BufferedReader} without any newline characters.
-	 * <p>
-	 * The BufferedReader is closed before returning.
 	 *
-	 * @param in BufferedReader to read lines from, as a side effect, it is closed
+	 * @param in BufferedReader to read lines from. The caller is responsible for closing the reader
 	 * @return a {@link List} of strings representing the text lines of the file
 	 * @throws IOException if there are any issues reading the file
 	 */
 	public static List<String> getLines(BufferedReader in) throws IOException {
-		try {
-			List<String> fileLines = new ArrayList<>();
-			String line;
-			while ((line = in.readLine()) != null) {
-				fileLines.add(line);
-			}
-			return fileLines;
+		List<String> fileLines = new ArrayList<>();
+		String line;
+		while ((line = in.readLine()) != null) {
+			fileLines.add(line);
 		}
-		finally {
-			try {
-				in.close();
-			}
-			catch (IOException e) {
-				// don't care; we tried
-			}
-		}
+		return fileLines;
 	}
 
 	/**
@@ -839,7 +805,7 @@ public final class FileUtilities {
 	/**
 	 * Returns true if the given file:
 	 * <ol>
-	 *  <li> is <tt>null</tt>, or  </li>
+	 *  <li> is <code>null</code>, or  </li>
 	 * 	<li>{@link File#isFile()} is true, </li>
 	 *  <li>and {@link File#length()} is == 0.</li>
 	 *  </ol>
@@ -886,7 +852,7 @@ public final class FileUtilities {
 	 * the paths are the same or unrelated, then null is returned.
 	 *
 	 * <P>For example, given, in this order, two files with these paths
-	 *  <tt>/a/b</tt> and <tt>/a/b/c</tt>, this method will return 'c'.
+	 *  <code>/a/b</code> and <code>/a/b/c</code>, this method will return 'c'.
 	 *
 	 * @param f1 the parent file
 	 * @param f2 the child file
@@ -1038,8 +1004,8 @@ public final class FileUtilities {
 	 * no case sensitivity checks are done and the original specified File param is returned
 	 * unchanged.
 	 * <p>
-	 * (Put another way: symlink "FILE1" -> "../path/file2", no case sensitive enforcing can be done,
-	 * but symlink "FILE1" -> "../path/file1" will be enforced by this method.)
+	 * (Put another way: symlink "FILE1" -&gt; "../path/file2", no case sensitive enforcing can be done,
+	 * but symlink "FILE1" -&gt; "../path/file1" will be enforced by this method.)
 	 * <p>
 	 * Querying a filepath that does not exist will result in a 'success' and the caller will
 	 * receive the non-existent File instance back.
@@ -1214,4 +1180,46 @@ public final class FileUtilities {
 		}
 		Desktop.getDesktop().open(file);
 	}
+
+	/**
+	 * Processes each text line in a text file, in a separate thread.
+	 * <p>
+	 * Thread exits when EOF is reached.
+	 *
+	 * @param is {@link InputStream} to read
+	 * @param consumer code that will process each text of the text file.
+	 */
+	public static void asyncForEachLine(InputStream is, Consumer<String> consumer) {
+		asyncForEachLine(new BufferedReader(new InputStreamReader(is)), consumer);
+	}
+
+	/**
+	 * Processes each text line in a text file, in a separate thread.
+	 * <p>
+	 * Thread exits when EOF is reached.
+	 *
+	 * @param reader {@link BufferedReader} to read
+	 * @param consumer code that will process each text of the text file.
+	 */
+	public static void asyncForEachLine(BufferedReader reader, Consumer<String> consumer) {
+		new Thread(() -> {
+			try {
+				while (true) {
+					String line = reader.readLine();
+					if (line == null) {
+						break;
+					}
+					consumer.accept(line);
+				}
+			}
+			catch (IOException ioe) {
+				// ignore io errors while reading because thats normal when hitting EOF
+			}
+			catch (Exception e) {
+				Msg.error(FileUtilities.class, "Exception while reading", e);
+			}
+
+		}, "Threaded Stream Reader Thread").start();
+	}
+
 }

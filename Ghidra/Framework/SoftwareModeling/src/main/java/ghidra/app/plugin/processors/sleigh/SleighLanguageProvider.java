@@ -177,8 +177,12 @@ public class SleighLanguageProvider implements LanguageProvider {
 			}
 		};
 		XmlPullParser parser = XmlPullParserFactory.create(specFile, errHandler, false);
-		read(parser, specFile.getParentFile(), specFile.getName());
-		parser.dispose();
+		try {
+			read(parser, specFile.getParentFile(), specFile.getName());
+		}
+		finally {
+			parser.dispose();
+		}
 	}
 
 	private void read(XmlPullParser parser, ResourceFile parentDirectory, String ldefs) {
@@ -369,7 +373,10 @@ public class SleighLanguageProvider implements LanguageProvider {
 			catch (SleighException ex) { // Error with the manual shouldn't prevent language from loading
 				Msg.error(this, ex.getMessage());
 			}
-			descriptions.put(id, description);
+			if (descriptions.put(id, description) != null) {
+				Msg.showError(this, null, "Duplicate Sleigh Language ID",
+					"Language " + id + " previously defined: " + defsFile);
+			}
 		}
 		parser.end(start);
 	}

@@ -18,8 +18,6 @@ package ghidra.framework.main.datatable;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
 
@@ -35,8 +33,7 @@ import docking.widgets.table.threaded.*;
 import ghidra.framework.main.FrontEndPlugin;
 import ghidra.framework.model.*;
 import ghidra.framework.plugintool.PluginTool;
-import ghidra.util.HelpLocation;
-import ghidra.util.SystemUtilities;
+import ghidra.util.*;
 import ghidra.util.bean.GGlassPane;
 import ghidra.util.bean.GGlassPanePainter;
 
@@ -105,8 +102,9 @@ public class ProjectDataTablePanel extends JPanel {
 				checkOpen(e);
 			}
 		});
-		gTable.getSelectionModel().addListSelectionListener(
-			e -> plugin.getTool().contextChanged(null));
+		gTable.getSelectionModel()
+				.addListSelectionListener(
+					e -> plugin.getTool().contextChanged(null));
 		gTable.setDefaultRenderer(Date.class, new DateCellRenderer());
 		gTable.setDefaultRenderer(DomainFileType.class, new TypeCellRenderer());
 
@@ -117,16 +115,12 @@ public class ProjectDataTablePanel extends JPanel {
 		table.dispose(); // this will dispose the gTable as well
 	}
 
-	/**
-	 * Set the help location for the data tree.
-	 */
 	public void setHelpLocation(HelpLocation helpLocation) {
 		HelpService help = Help.getHelpService();
 		help.registerHelp(table, helpLocation);
 	}
 
 	private class DateCellRenderer extends GTableCellRenderer {
-		DateFormat formatter = new SimpleDateFormat("MMM dd, yyyy HH:mm");
 
 		@Override
 		public Component getTableCellRendererComponent(GTableCellRenderingData data) {
@@ -136,7 +130,7 @@ public class ProjectDataTablePanel extends JPanel {
 			Object value = data.getValue();
 
 			if (value != null) {
-				renderer.setText(formatter.format((Date) value));
+				renderer.setText(DateUtils.formatDateTimestamp((Date) value));
 			}
 			else {
 				renderer.setText("");
@@ -287,7 +281,8 @@ public class ProjectDataTablePanel extends JPanel {
 			DomainFileInfo info = model.getRowObject(i);
 			list.add(info.getDomainFile());
 		}
-		return new ProjectDataActionContext(provider, projectData,
+
+		return new ProjectDataContext(provider, projectData,
 			model.getRowObject(selectedRows[0]), null, list, gTable, true);
 	}
 

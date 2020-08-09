@@ -28,41 +28,25 @@ import docking.menu.DockingCheckboxMenuItemUI;
  */
 public class HexNumbersAction extends CompositeEditorTableAction implements ToggleDockingActionIf {
 
-	private final static String ACTION_NAME = "Show Numbers In Hex";
-	private final static String GROUP_NAME = BASIC_ACTION_GROUP;
-	private final static String defaultDescription = "Show Numbers in Hexadecimal";
-	private static String[] defaultPath = new String[] { defaultDescription };
+	public final static String ACTION_NAME = "Show Numbers In Hex";
+	private final static String GROUP_NAME = DATA_ACTION_GROUP;
+	private final static String DESCRIPTION = "Show Numbers in Hexadecimal";
+	private static String[] PATH = new String[] { DESCRIPTION };
 	private boolean isSelected;
 
-	/**
-	 * @param name
-	 * @param group
-	 * @param owner
-	 * @param popupPath
-	 * @param menuPath
-	 * @param icon
-	 * @param useToolbar
-	 * @param checkBox
-	 */
 	public HexNumbersAction(CompositeEditorProvider provider) {
-		super(provider, EDIT_ACTION_PREFIX + ACTION_NAME, GROUP_NAME, defaultPath, defaultPath,
+		super(provider, EDIT_ACTION_PREFIX + ACTION_NAME, GROUP_NAME, PATH, PATH,
 			null);
-		setDescription(defaultDescription);
+		setDescription(DESCRIPTION);
 		setEnabled(true);
 		setSelected(model.isShowingNumbersInHex());
 	}
 
-	/* (non-Javadoc)
-	 * @see java.awt.event.ActionListener#actionPerformed(java.awt.event.ActionEvent)
-	 */
 	@Override
 	public void actionPerformed(ActionContext context) {
 		model.displayNumbersInHex(!model.isShowingNumbersInHex());
 	}
 
-	/* (non-Javadoc)
-	 * @see ghidra.app.plugin.core.compositeeditor.CompositeEditorAction#adjustEnablement()
-	 */
 	@Override
 	public void adjustEnablement() {
 		// Always enabled.

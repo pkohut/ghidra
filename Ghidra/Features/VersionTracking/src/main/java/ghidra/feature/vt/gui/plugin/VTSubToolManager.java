@@ -123,7 +123,7 @@ public class VTSubToolManager implements VTControllerListener, OptionsChangeList
 	}
 
 	private void resetTool(String toolName) {
-		String toolFileName = toolName + ".tool";
+		String toolFileName = toolName + ToolUtils.TOOL_EXTENSION;
 		File toolFile = new File(ToolUtils.getApplicationToolDirPath(), toolFileName);
 		if (toolFile.exists()) {
 			toolFile.delete();
@@ -174,7 +174,7 @@ public class VTSubToolManager implements VTControllerListener, OptionsChangeList
 		return newTool;
 	}
 
-	private DockingActionIf getToolAction(Tool tool, String actionName) {
+	private DockingActionIf getToolAction(PluginTool tool, String actionName) {
 		Set<DockingActionIf> actions = tool.getDockingActionsByOwnerName(ToolConstants.TOOL_OWNER);
 		for (DockingActionIf action : actions) {
 			if (action.getName().equals(actionName)) {

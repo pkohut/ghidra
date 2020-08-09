@@ -43,6 +43,8 @@ import ghidra.util.SystemUtilities;
 
 public class FieldPanel extends JPanel
 		implements IndexedScrollable, LayoutModelListener, ChangeListener {
+	public static final int MOUSEWHEEL_LINES_TO_SCROLL = 3;
+
 	private LayoutModel model;
 
 	private boolean repaintPosted;
@@ -58,6 +60,7 @@ public class FieldPanel extends JPanel
 	private KeyHandler keyHandler = new KeyHandler();
 	private HoverHandler hoverHandler;
 	private SelectionHandler selectionHandler = new SelectionHandler();
+	private boolean horizontalScrollingEnabled = true;
 
 	private FieldLocation cursorPosition = new FieldLocation();
 	private FieldSelection selection = new FieldSelection();
@@ -380,6 +383,14 @@ public class FieldPanel extends JPanel
 		cursorHandler.setBlinkCursor(blinkCursor);
 	}
 
+	public void enableSelection(boolean b) {
+		selectionHandler.enableSelection(b);
+	}
+
+	public void setHorizontalScrollingEnabled(boolean enabled) {
+		horizontalScrollingEnabled = enabled;
+	}
+
 	/**
 	 * Returns the default background color.
 	 */
@@ -569,10 +580,10 @@ public class FieldPanel extends JPanel
 	}
 
 	/**
-	 * Add a new hover service to be managed.
+	 * Add a new hover provider to be managed.
 	 *
-	 * @param hoverService
-	 *            the new hover service to be managed.
+	 * @param hoverProvider
+	 *            the new hover provider to be managed.
 	 */
 	public void setHoverProvider(HoverProvider hoverProvider) {
 		hoverHandler.setHoverProvider(hoverProvider);
@@ -855,7 +866,7 @@ public class FieldPanel extends JPanel
 	/**
 	 * Scrolls the display to show the layout specified by index at the vertical
 	 * position specified by yPos. Generally, the index will be layout at the
-	 * top of the screen and the yPos will be <= 0, meaning the layout may be
+	 * top of the screen and the yPos will be &lt;= 0, meaning the layout may be
 	 * partially off the top of the screen.
 	 *
 	 * @param index
@@ -952,21 +963,43 @@ public class FieldPanel extends JPanel
 
 	@Override
 	// BigLayoutModelListener
-	public void modelSizeChanged() {
-		BigInteger anchorIndex = layouts.isEmpty() ? BigInteger.ZERO : layouts.get(0).getIndex();
+	public void modelSizeChanged(IndexMapper indexMapper) {
+		BigInteger anchorIndex =
+			layouts.isEmpty() ? BigInteger.ZERO : indexMapper.map(layouts.get(0).getIndex());
 		int anchorOffset = layouts.isEmpty() ? 0 : layouts.get(0).getYPos();
 		Point cursorPoint = getCursorPoint();
-		AnchoredLayout layout = findLayoutOnScreen(cursorPosition.getIndex());
+		BigInteger cursorIndex = indexMapper.map(cursorPosition.getIndex());
+		AnchoredLayout layout = findLayoutOnScreen(cursorIndex);
 		if (layout != null) {
-			anchorIndex = cursorPosition.getIndex();
+			anchorIndex = cursorIndex;
 			anchorOffset = layout.getYPos();
 		}
 		notifyScrollListenerModelChanged();
 		layouts = layoutHandler.positionLayoutsAroundAnchor(anchorIndex, anchorOffset);
 
+		updateHighlight(indexMapper);
 		cursorHandler.updateCursor(cursorPoint);
 		notifyScrollListenerViewChangedAndRepaint();
 		invalidate();
+	}
+
+	private void updateHighlight(IndexMapper mapper) {
+		if (highlight.isEmpty()) {
+			return;
+		}
+		FieldSelection oldHighlight = highlight;
+		highlight = new FieldSelection();
+		for (FieldRange range : oldHighlight) {
+			FieldLocation start = range.getStart();
+			FieldLocation end = range.getEnd();
+			BigInteger startIndex = mapper.map(start.getIndex());
+			BigInteger endIndex = mapper.map(end.getIndex());
+			if (startIndex != null && endIndex != null) {
+				start.setIndex(startIndex);
+				end.setIndex(endIndex);
+				highlight.addRange(start, end);
+			}
+		}
 	}
 
 	@Override
@@ -1162,7 +1195,18 @@ public class FieldPanel extends JPanel
 		cursorHandler.doCursorEnd(trigger);
 	}
 
-	private FieldLocation getLocationForPoint(int x, int y) {
+	public Point getPointForLocation(FieldLocation location) {
+
+		AnchoredLayout layout = findLayoutOnScreen(location.getIndex());
+		if (layout == null) {
+			return null;
+		}
+		Rectangle r =
+			layout.getCursorRect(location.fieldNum, location.row, location.col);
+		return r.getLocation();
+	}
+
+	public FieldLocation getLocationForPoint(int x, int y) {
 		FieldLocation location = new FieldLocation();
 		// delegate to the appropriate layout to do the work
 		Layout layout = findLayoutAt(y);
@@ -1213,8 +1257,7 @@ public class FieldPanel extends JPanel
 		final FieldLocation loc = new FieldLocation(cursorPosition);
 		final Field field = cursorHandler.getCurrentField();
 		SystemUtilities.runSwingLater(() -> {
-			for (int i = 0; i < fieldMouseListeners.size(); i++) {
-				FieldMouseListener l = fieldMouseListeners.get(i);
+			for (FieldMouseListener l : fieldMouseListeners) {
 				l.buttonPressed(loc, field, ev);
 			}
 		});
@@ -1222,15 +1265,11 @@ public class FieldPanel extends JPanel
 
 	private JViewport getViewport() {
 		Container c = getParent();
-		if (c == null) {
-			return null;
-		}
-		if (c instanceof JViewport) {
-			return (JViewport) c;
-		}
-		c = c.getParent();
-		if (c instanceof JViewport) {
-			return (JViewport) c;
+		while (c != null) {
+			if (c instanceof JViewport) {
+				return (JViewport) c;
+			}
+			c = c.getParent();
 		}
 		return null;
 	}
@@ -1240,8 +1279,7 @@ public class FieldPanel extends JPanel
 	 */
 	private void notifySelectionChanged(EventTrigger trigger) {
 		FieldSelection currentSelection = new FieldSelection(selection);
-		for (int i = 0; i < selectionListeners.size(); i++) {
-			FieldSelectionListener l = selectionListeners.get(i);
+		for (FieldSelectionListener l : selectionListeners) {
 			l.selectionChanged(currentSelection, trigger);
 		}
 	}
@@ -1252,8 +1290,7 @@ public class FieldPanel extends JPanel
 	private void notifyHighlightChanged() {
 
 		FieldSelection currentSelection = new FieldSelection(highlight);
-		for (int i = 0; i < highlightListeners.size(); i++) {
-			FieldSelectionListener l = highlightListeners.get(i);
+		for (FieldSelectionListener l : highlightListeners) {
 			l.selectionChanged(currentSelection, EventTrigger.API_CALL);
 		}
 	}
@@ -1469,7 +1506,12 @@ public class FieldPanel extends JPanel
 		@Override
 		public void mouseWheelMoved(MouseWheelEvent e) {
 			double wheelRotation = e.getPreciseWheelRotation();
-			int scrollAmount = (int) (wheelRotation * 40);
+
+			Layout firstLayout = model.getLayout(BigInteger.ZERO);
+			int layoutScrollHt = firstLayout != null //
+					? firstLayout.getScrollableUnitIncrement(0, 1)
+					: 0;
+			int scrollAmount = (int) (wheelRotation * layoutScrollHt * MOUSEWHEEL_LINES_TO_SCROLL);
 			if (scrollAmount == 0) {
 				return;
 			}
@@ -1479,9 +1521,28 @@ public class FieldPanel extends JPanel
 			}
 			else {
 				hoverHandler.stopHover();
-				scrollView(scrollAmount);
+
+				if (e.isShiftDown() && horizontalScrollingEnabled) {
+					scrollViewHorizontally(scrollAmount);
+				}
+				else {
+					scrollView(scrollAmount);
+				}
 			}
 			e.consume();
+		}
+
+		private void scrollViewHorizontally(int scrollAmount) {
+
+			JViewport vp = getViewport();
+			if (vp == null) {
+				// this will happen for Field Panels not placed inside of scroll panes
+				return;
+			}
+
+			// horizontal scroll (only move viewport)
+			Point pos = vp.getViewPosition();
+			vp.setViewPosition(new Point(Math.max(0, pos.x + scrollAmount), pos.y));
 		}
 	}
 
@@ -1587,9 +1648,15 @@ public class FieldPanel extends JPanel
 			if (e.getButton() != MouseEvent.BUTTON1) {
 				return;
 			}
-			cursorHandler.setCursorPos(e.getX(), e.getY(), null);
-			cursorHandler.notifyCursorChanged(EventTrigger.GUI_ACTION);
-			if (!selectionHandler.isInProgress() && !didDrag) {
+
+			cursorHandler.setCursorPos(e.getX(), e.getY(), EventTrigger.GUI_ACTION);
+			if (didDrag) {
+				// Send an event after the drag is finished.  Event are suppressed while dragging,
+				// meaning that the above call to setCursorPos() will not have fired an event 
+				// because the internal cursor position did not change during the mouse release.
+				cursorHandler.notifyCursorChanged(EventTrigger.GUI_ACTION);
+			}
+			else if (!selectionHandler.isInProgress()) {
 				selectionHandler.clearSelection();
 			}
 			selectionHandler.endSelectionSequence();
@@ -2054,8 +2121,7 @@ public class FieldPanel extends JPanel
 			}
 
 			FieldLocation currentLocation = new FieldLocation(cursorPosition);
-			for (int i = 0; i < cursorListeners.size(); i++) {
-				FieldLocationListener l = cursorListeners.get(i);
+			for (FieldLocationListener l : cursorListeners) {
 				l.fieldLocationChanged(currentLocation, currentField, trigger);
 			}
 
@@ -2093,16 +2159,11 @@ public class FieldPanel extends JPanel
 		private void notifyInputListeners(KeyEvent ev) {
 
 			if (cursorOn) {
-				for (int i = 0; i < inputListeners.size(); i++) {
-					FieldInputListener l = inputListeners.get(i);
+				for (FieldInputListener l : inputListeners) {
 					l.keyPressed(ev, cursorPosition.getIndex(), cursorPosition.fieldNum,
 						cursorPosition.row, cursorPosition.col, currentField);
 				}
 			}
 		}
-	}
-
-	public void enableSelection(boolean b) {
-		selectionHandler.enableSelection(b);
 	}
 }

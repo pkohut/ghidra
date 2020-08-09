@@ -131,7 +131,7 @@ public class PdbParser {
 	/**
 	 * Parse the PDB file, enforcing pre-conditions and post-conditions.
 	 *
-	 * @throws IOException  if there was a file I/O issue
+	 * @throws IOException If an I/O error occurs
 	 * @throws PdbException  if there was a problem during processing
 	 */
 	public void parse() throws IOException, PdbException {
@@ -176,6 +176,9 @@ public class PdbParser {
 					throw new PdbException(getErrorAndWarningMessages());
 				}
 			}
+		}
+		else { // only for .pdb.xml files.
+			verifyPdbSignature();
 		}
 		parsed = true;
 	}
@@ -241,6 +244,12 @@ public class PdbParser {
 		// NTDDK has not been parsed
 	}
 
+	/**
+	 * Configures the set of command line arguments for the pdb.exe process
+	 * @param noValidation do not ask for GUID/Signature, Age validation
+	 * @return the array of arguments for the command line
+	 * @throws PdbException if the appropriate set of GUID/Signature, Age values is not available
+	 */
 	private String[] getCommandLineArray(boolean noValidation) throws PdbException {
 
 		File pdbExeFile;
@@ -273,14 +282,14 @@ public class PdbParser {
 	private void completeDefferedTypeParsing(ApplyDataTypes applyDataTypes,
 			ApplyTypeDefs applyTypeDefs, MessageLog log) throws CancelledException {
 
-		defineClasses(monitor, log);
+		defineClasses(log);
 
 		if (applyDataTypes != null) {
 			applyDataTypes.buildDataTypes(monitor);
 		}
 
 		if (applyTypeDefs != null) {
-			applyTypeDefs.buildTypeDefs(monitor); // TODO: no dependencies exit on TypeDefs (use single pass)
+			applyTypeDefs.buildTypeDefs(monitor); // TODO: no dependencies exist on TypeDefs (use single pass)
 		}
 
 		// Ensure that all data types are resolved
@@ -304,9 +313,6 @@ public class PdbParser {
 
 		checkPdbLoaded();
 
-		if (monitor == null) {
-			monitor = TaskMonitor.DUMMY;
-		}
 		errHandler.setMessageLog(log);
 		Msg.debug(this, "Found PDB for " + program.getName());
 		try {
@@ -320,9 +326,7 @@ public class PdbParser {
 				if (hasErrors()) {
 					throw new IOException(getErrorAndWarningMessages());
 				}
-				if (monitor.isCancelled()) {
-					return;
-				}
+				monitor.checkCanceled();
 				XmlElement element = parser.next();
 				if (!element.isStart()) {
 					continue;
@@ -386,7 +390,7 @@ public class PdbParser {
 			options.setBoolean(PdbParserConstants.PDB_LOADED, true);
 
 			if (dataTypeParser != null && dataTypeParser.hasMissingBitOffsetError()) {
-				log.error("PDB Parser",
+				log.error("PDB",
 					"One or more bitfields were specified without bit-offset data.\nThe use of old pdb.xml data could be the cause.");
 			}
 		}
@@ -423,17 +427,18 @@ public class PdbParser {
 		}
 	}
 
-	private void defineClasses(TaskMonitor monitor, MessageLog log) throws CancelledException {
+	private void defineClasses(MessageLog log) throws CancelledException {
 		// create namespace and classes in an ordered fashion use tree map
+		monitor.setMessage("Define classes...");
 		monitor.initialize(namespaceMap.size());
 		for (SymbolPath path : namespaceMap.keySet()) {
 			monitor.checkCanceled();
 			boolean isClass = namespaceMap.get(path);
 			Namespace parentNamespace =
-				NamespaceUtils.getNamespace(program, path.getParent(), null);
+				NamespaceUtils.getNonFunctionNamespace(program, path.getParent());
 			if (parentNamespace == null) {
 				String type = isClass ? "class" : "namespace";
-				log.appendMsg("Error: failed to define " + type + ": " + path);
+				log.appendMsg("PDB", "Failed to define " + type + ": " + path);
 				continue;
 			}
 			defineNamespace(parentNamespace, path.getName(), isClass, log);
@@ -461,8 +466,9 @@ public class PdbParser {
 				else if (namespace.getSymbol().getSymbolType() == SymbolType.NAMESPACE) {
 					return;
 				}
-				log.appendMsg("Unable to create class namespace due to conflicting symbol: " +
-					namespace.getName(true));
+				log.appendMsg("PDB",
+					"Unable to create class namespace due to conflicting symbol: " +
+						namespace.getName(true));
 			}
 			else if (isClass) {
 				symbolTable.createClass(parentNamespace, name, SourceType.IMPORTED);
@@ -472,8 +478,8 @@ public class PdbParser {
 			}
 		}
 		catch (Exception e) {
-			log.appendMsg("Unable to create class namespace: " + parentNamespace.getName(true) +
-				Namespace.NAMESPACE_DELIMITER + name);
+			log.appendMsg("PDB", "Unable to create class namespace: " +
+				parentNamespace.getName(true) + Namespace.DELIMITER + name);
 		}
 	}
 
@@ -500,8 +506,8 @@ public class PdbParser {
 	 * age match the program's GUID/Signature and age.
 	 *
 	 * @param skipValidation true if we should skip checking that GUID/Signature and age match
-	 * @throws PdbException
-	 * @throws IOException
+	 * @throws PdbException If issue running the pdb.exe process
+	 * @throws IOException If an I/O error occurs
 	 */
 	private void processPdbContents(boolean skipValidation) throws PdbException, IOException {
 		InputStream in = null;
@@ -547,18 +553,15 @@ public class PdbParser {
 		catch (SAXException e) {
 			throw new IOException(e.getMessage());
 		}
-
-		verifyPdbSignature(in);
 	}
 
 	/**
 	 * Check to see if GUID and age in XML file matches GUID/Signature and age of binary
 	 *
-	 * @param in  InputStream for XML file
-	 * @throws IOException
-	 * @throws PdbException
+	 * @throws IOException If an I/O error occurs
+	 * @throws PdbException If error parsing the PDB.XML data
 	 */
-	private void verifyPdbSignature(InputStream in) throws IOException, PdbException {
+	private void verifyPdbSignature() throws IOException, PdbException {
 
 		XmlElement xmlelem;
 
@@ -572,7 +575,7 @@ public class PdbParser {
 				}
 				throw new PdbException("PDB Execution failure of " + PDB_EXE + ".\n" +
 					"This was likely caused by severe execution failure which can occur if executed\n" +
-					"on an unsupported platform. It may be neccessary to rebuild the PDB executable\n" +
+					"on an unsupported platform. It may be necessary to rebuild the PDB executable\n" +
 					"for your platform (see Ghidra/Features/PDB/src).");
 			}
 			throw new PdbException("PDB parsing problem: " + e.getMessage());
@@ -648,7 +651,7 @@ public class PdbParser {
 	 * Translate signature to GUID form. A signature is usually 8 characters long. A GUID
 	 * has 32 characters and its subparts are separated by '-' characters.
 	 *
-	 * @param pdbSignature
+	 * @param pdbSignature signature for conversion
 	 * @return reformatted String
 	 */
 	private String reformatSignatureToGuidForm(String pdbSignature) {
@@ -736,50 +739,50 @@ public class PdbParser {
 
 	EnumDataType createEnum(String name, int length) {
 		SymbolPath path = new SymbolPath(name);
+		length = Integer.max(length, 1);
 		return new EnumDataType(getCategory(path.getParent(), true), path.getName(), length,
 			dataMgr);
 	}
 
-	void createString(boolean isUnicode, Address address, MessageLog log, TaskMonitor monitor) {
+	void createString(boolean isUnicode, Address address, MessageLog log) {
 		DataType dataType = isUnicode ? new UnicodeDataType() : new StringDataType();
-		createData(address, dataType, log, monitor);
+		createData(address, dataType, log);
 	}
 
-	void createData(Address address, String datatype, MessageLog log, TaskMonitor monitor)
-			throws CancelledException {
+	void createData(Address address, String datatype, MessageLog log) throws CancelledException {
 		WrappedDataType wrappedDt = getDataTypeParser().findDataType(datatype);
 		if (wrappedDt == null) {
-			log.appendMsg("Error: Failed to resolve datatype " + datatype + " at " + address);
+			log.appendMsg("PDB", "Failed to resolve datatype " + datatype + " at " + address);
 		}
 		else if (wrappedDt.isZeroLengthArray()) {
 			Msg.debug(this, "Did not apply zero length array data " + datatype + " at " + address);
 		}
 		else {
-			createData(address, wrappedDt.getDataType(), log, monitor);
+			createData(address, wrappedDt.getDataType(), log);
 		}
 	}
 
-	void createData(Address address, DataType dataType, MessageLog log, TaskMonitor monitor) {
+	void createData(Address address, DataType dataType, MessageLog log) {
 		DumbMemBufferImpl memBuffer = new DumbMemBufferImpl(program.getMemory(), address);
 		DataTypeInstance dti = DataTypeInstance.getDataTypeInstance(dataType, memBuffer);
 		if (dti == null) {
-			log.appendMsg(
-				"Error: Failed to apply datatype " + dataType.getName() + " at " + address);
+			log.appendMsg("PDB",
+				"Failed to apply datatype " + dataType.getName() + " at " + address);
 		}
 		else {
-			createData(address, dti.getDataType(), dti.getLength(), log, monitor);
+			createData(address, dti.getDataType(), dti.getLength(), log);
 		}
 	}
 
-	private void createData(Address address, DataType dataType, int dataTypeLength, MessageLog log,
-			TaskMonitor monitor) {
+	private void createData(Address address, DataType dataType, int dataTypeLength,
+			MessageLog log) {
 
 		// Ensure that we do not clear previously established code and data
 		Data existingData = null;
 		CodeUnit cu = program.getListing().getCodeUnitContaining(address);
 		if (cu != null) {
 			if ((cu instanceof Instruction) || !address.equals(cu.getAddress())) {
-				log.appendMsg("Warning: Did not create data type \"" + dataType.getDisplayName() +
+				log.appendMsg("PDB", "Did not create data type \"" + dataType.getDisplayName() +
 					"\" at address " + address + " due to conflict");
 				return;
 			}
@@ -793,8 +796,8 @@ public class PdbParser {
 			return;
 		}
 		if (dataType.getLength() <= 0 && dataTypeLength <= 0) {
-			log.appendMsg("Unknown dataTypeLength specified at address " + address + " for " +
-				dataType.getName());
+			log.appendMsg("PDB", "Unknown dataTypeLength specified at address " + address +
+				" for " + dataType.getName());
 			return;
 		}
 
@@ -826,8 +829,8 @@ public class PdbParser {
 				}
 			}
 			catch (Exception e) {
-				log.appendMsg("Unable to create " + dataType.getDisplayName() + " at 0x" + address +
-					": " + e.getMessage());
+				log.appendMsg("PDB", "Unable to create " + dataType.getDisplayName() + " at 0x" +
+					address + ": " + e.getMessage());
 			}
 		}
 		else if (isDataReplaceable(existingData)) {
@@ -836,7 +839,7 @@ public class PdbParser {
 				listing.createData(address, dataType, dataTypeLength);
 			}
 			catch (Exception e) {
-				log.appendMsg("Unable to replace " + dataType.getDisplayName() + " at 0x" +
+				log.appendMsg("PDB", "Unable to replace " + dataType.getDisplayName() + " at 0x" +
 					address + ": " + e.getMessage());
 			}
 		}
@@ -844,9 +847,9 @@ public class PdbParser {
 			DataType existingDataType = existingData.getDataType();
 			String existingDataTypeString =
 				existingDataType == null ? "null" : existingDataType.getDisplayName();
-			log.appendMsg("Warning: Did not create data type \"" + dataType.getDisplayName() +
-				"\" at address " + address + ".  Preferring existing datatype \"" +
-				existingDataTypeString + "\"");
+			log.appendMsg("PDB",
+				"Did not create data type \"" + dataType.getDisplayName() + "\" at address " +
+					address + ".  Preferring existing datatype \"" + existingDataTypeString + "\"");
 		}
 	}
 
@@ -924,7 +927,7 @@ public class PdbParser {
 	}
 
 	boolean createSymbol(Address address, String symbolPathString, boolean forcePrimary,
-			MessageLog log, TaskMonitor monitor) throws CancelledException {
+			MessageLog log) {
 
 		try {
 			Namespace namespace = program.getGlobalNamespace();
@@ -950,7 +953,7 @@ public class PdbParser {
 			return true;
 		}
 		catch (InvalidInputException e) {
-			log.appendMsg("Unable to create symbol: " + e.getMessage());
+			log.appendMsg("PDB", "Unable to create symbol at " + address + ": " + e.getMessage());
 		}
 		return false;
 	}
@@ -981,21 +984,21 @@ public class PdbParser {
 	 * @return name without namespace prefix
 	 */
 	String stripNamespace(String name) {
-		int index = name.lastIndexOf(Namespace.NAMESPACE_DELIMITER);
+		int index = name.lastIndexOf(Namespace.DELIMITER);
 		if (index <= 0) {
 			return name;
 		}
-		return name.substring(index + Namespace.NAMESPACE_DELIMITER.length());
+		return name.substring(index + Namespace.DELIMITER.length());
 	}
 
 	/**
 	 * Get the category path associated with the namespace qualified data type name
 	 * @param namespaceQualifiedDataTypeName data type name
 	 * @param addPdbRoot true if PDB root category should be used, otherwise it will be omitted
-	 * @return
+	 * @return the category path
 	 */
 	CategoryPath getCategory(String namespaceQualifiedDataTypeName, boolean addPdbRoot) {
-		String[] names = namespaceQualifiedDataTypeName.split(Namespace.NAMESPACE_DELIMITER);
+		String[] names = namespaceQualifiedDataTypeName.split(Namespace.DELIMITER);
 		CategoryPath category = addPdbRoot ? pdbCategory : CategoryPath.ROOT;
 		if (names.length > 1) {
 			String[] categoryNames = new String[names.length - 1];
@@ -1047,12 +1050,12 @@ public class PdbParser {
 	 * @throws PdbException if there was a problem with the PDB attributes
 	 */
 	public static File findPDB(Program program) throws PdbException {
-		return findPDB(getPdbAttributes(program), null, null);
+		return findPDB(getPdbAttributes(program), false, null, null);
 	}
 
 	/**
 	 * Determine if the PDB has previously been loaded for the specified program.
-	 * @param program
+	 * @param program  program for which to find a matching PDB
 	 * @return true if PDB has already been loaded
 	 */
 	public static boolean isAlreadyLoaded(Program program) {
@@ -1064,12 +1067,15 @@ public class PdbParser {
 	 * location where symbols are stored.
 	 *
 	 * @param program  program for which to find a matching PDB
+	 * @param includePeSpecifiedPdbPath to also check the PE-header-specified PDB path
 	 * @param symbolsRepositoryPath  location where downloaded symbols are stored
 	 * @return  matching PDB for program, or null
 	 * @throws PdbException if there was a problem with the PDB attributes
 	 */
-	public static File findPDB(Program program, String symbolsRepositoryPath) throws PdbException {
-		return findPDB(getPdbAttributes(program), symbolsRepositoryPath, null);
+	public static File findPDB(Program program, boolean includePeSpecifiedPdbPath,
+			String symbolsRepositoryPath) throws PdbException {
+		return findPDB(getPdbAttributes(program), includePeSpecifiedPdbPath, symbolsRepositoryPath,
+			null);
 	}
 
 	/**
@@ -1077,13 +1083,15 @@ public class PdbParser {
 	 * type of file to search from (.pdb or .pdb.xml).
 	 *
 	 * @param pdbAttributes  PDB attributes associated with the program
+	 * @param includePeSpecifiedPdbPath to also check the PE-header-specified PDB path
 	 * @param symbolsRepositoryPath  location of the local symbols repository (can be null)
 	 * @param fileType  type of file to search for (can be null)
 	 * @return matching PDB file (or null, if not found)
 	 * @throws PdbException  if there was a problem with the PDB attributes
 	 */
-	public static File findPDB(PdbProgramAttributes pdbAttributes, String symbolsRepositoryPath,
-			PdbFileType fileType) throws PdbException {
+	public static File findPDB(PdbProgramAttributes pdbAttributes,
+			boolean includePeSpecifiedPdbPath, String symbolsRepositoryPath, PdbFileType fileType)
+			throws PdbException {
 
 		// Store potential names of PDB files and potential locations of those files,
 		// so that all possible combinations can be searched.
@@ -1103,7 +1111,7 @@ public class PdbParser {
 		}
 
 		return checkPathsForPdb(symbolsRepositoryPath, guidSubdirPaths, potentialPdbNames, fileType,
-			pdbAttributes);
+			pdbAttributes, includePeSpecifiedPdbPath);
 	}
 
 	/**
@@ -1130,16 +1138,16 @@ public class PdbParser {
 	 * @param fileType         file type to search for (can be null)
 	 * @param pdbAttributes    PDB attributes associated with the program
 	 * @return  matching PDB file, if found (else null)
-	 * @throws PdbException
 	 */
 	private static File checkPathsForPdb(String symbolsRepositoryPath, Set<String> guidSubdirPaths,
 			List<String> potentialPdbNames, PdbFileType fileType,
-			PdbProgramAttributes pdbAttributes) {
+			PdbProgramAttributes pdbAttributes, boolean includePeSpecifiedPdbPath) {
 
 		File foundPdb = null;
 		Set<File> symbolsRepoPaths =
 			getSymbolsRepositoryPaths(symbolsRepositoryPath, guidSubdirPaths);
-		Set<File> predefinedPaths = getPredefinedPaths(guidSubdirPaths, pdbAttributes);
+		Set<File> predefinedPaths =
+			getPredefinedPaths(guidSubdirPaths, pdbAttributes, includePeSpecifiedPdbPath);
 		boolean fileTypeSpecified = (fileType != null), checkForXml;
 
 		// If the file type is specified, look for that type of file only.
@@ -1216,11 +1224,11 @@ public class PdbParser {
 
 	// Get list of "paths we know about" to search for PDBs
 	private static Set<File> getPredefinedPaths(Set<String> guidSubdirPaths,
-			PdbProgramAttributes pdbAttributes) {
+			PdbProgramAttributes pdbAttributes, boolean includePeSpecifiedPdbPath) {
 
 		Set<File> predefinedPaths = new LinkedHashSet<>();
 
-		getPathsFromAttributes(pdbAttributes, predefinedPaths);
+		getPathsFromAttributes(pdbAttributes, includePeSpecifiedPdbPath, predefinedPaths);
 		getWindowsPaths(guidSubdirPaths, predefinedPaths);
 		getLibraryPaths(guidSubdirPaths, predefinedPaths);
 
@@ -1265,12 +1273,12 @@ public class PdbParser {
 	}
 
 	private static void getPathsFromAttributes(PdbProgramAttributes pdbAttributes,
-			Set<File> predefinedPaths) {
+			boolean includePeSpecifiedPdbPath, Set<File> predefinedPaths) {
 		if (pdbAttributes != null) {
 
 			String currentPath = pdbAttributes.getPdbFile();
 
-			if (currentPath != null) {
+			if (currentPath != null && includePeSpecifiedPdbPath) {
 				File parentDir = new File(currentPath).getParentFile();
 
 				if (parentDir != null && parentDir.exists()) {
@@ -1294,10 +1302,10 @@ public class PdbParser {
 	 * Returns the first PDB-type file found. Assumes list of potentialPdbDirs is in the order
 	 * in which the directories should be searched.
 	 *
-	 * @param potentialPdbDirs
-	 * @param potentialPdbNames
+	 * @param potentialPdbDirs potential PDB directories
+	 * @param potentialPdbNames potential PDB names
 	 * @param findXML - if true, only searches for the .pdb.xml version of the .pdb file
-	 * @return
+	 * @return the first file found
 	 */
 	private static File checkForPDBorXML(Set<File> potentialPdbDirs, List<String> potentialPdbNames,
 			boolean findXML) {
@@ -1343,10 +1351,6 @@ public class PdbParser {
 		return getDataTypeParser().getCachedDataType(name);
 	}
 
-	void addDataType(DataType dataType) {
-		getDataTypeParser().addDataType(dataType);
-	}
-
 	WrappedDataType findDataType(String dataTypeName) throws CancelledException {
 		return getDataTypeParser().findDataType(dataTypeName);
 	}
@@ -1367,7 +1371,7 @@ public class PdbParser {
 
 		PdbXmlMember(XmlElement element) {
 			super(SymbolUtilities.replaceInvalidChars(element.getAttribute("name"), false),
-				element.getAttribute("datatype"),
+				SymbolUtilities.replaceInvalidChars(element.getAttribute("datatype"), false),
 				XmlUtilities.parseInt(element.getAttribute("offset")),
 				PdbKind.parse(element.getAttribute("kind")), getDataTypeParser());
 		}

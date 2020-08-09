@@ -22,7 +22,7 @@ import javax.swing.Icon;
 import javax.swing.SwingUtilities;
 
 import docking.ActionContext;
-import docking.DockingTool;
+import docking.Tool;
 import docking.action.*;
 import docking.actions.PopupActionProvider;
 import docking.widgets.table.GTable;
@@ -34,7 +34,8 @@ import ghidra.app.services.*;
 import ghidra.framework.cmd.CompoundCmd;
 import ghidra.framework.model.*;
 import ghidra.framework.options.SaveState;
-import ghidra.framework.plugintool.*;
+import ghidra.framework.plugintool.PluginInfo;
+import ghidra.framework.plugintool.PluginTool;
 import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
@@ -297,6 +298,7 @@ public class BookmarkPlugin extends ProgramPlugin
 
 	@Override
 	public synchronized void domainObjectChanged(DomainObjectChangedEvent ev) {
+
 		if (ev.containsEvent(DomainObject.DO_OBJECT_RESTORED) ||
 			ev.containsEvent(ChangeManager.DOCR_MEMORY_BLOCK_MOVED) ||
 			ev.containsEvent(ChangeManager.DOCR_MEMORY_BLOCK_REMOVED)) {
@@ -360,10 +362,6 @@ public class BookmarkPlugin extends ProgramPlugin
 		getBookmarkNavigator(bookmarkMgr.getBookmarkType(type));
 	}
 
-	/**
-	 * Bookmark has been changed.
-	 * @param bookmark
-	 */
 	private void bookmarkChanged(Bookmark bookmark) {
 		if (bookmark == null) {
 			scheduleUpdate(null);
@@ -376,10 +374,6 @@ public class BookmarkPlugin extends ProgramPlugin
 		provider.bookmarkChanged(bookmark);
 	}
 
-	/**
-	 * Bookmark has been added.
-	 * @param bookmark
-	 */
 	private void bookmarkAdded(Bookmark bookmark) {
 		if (bookmark == null) {
 			scheduleUpdate(null);
@@ -494,7 +488,7 @@ public class BookmarkPlugin extends ProgramPlugin
 	}
 
 	@Override
-	public List<DockingActionIf> getPopupActions(DockingTool tool, ActionContext context) {
+	public List<DockingActionIf> getPopupActions(Tool activeTool, ActionContext context) {
 		Object contextObject = context.getContextObject();
 		if (!(contextObject instanceof MarkerLocation)) {
 			return null;

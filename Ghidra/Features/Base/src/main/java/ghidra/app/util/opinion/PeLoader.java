@@ -16,6 +16,7 @@
 package ghidra.app.util.opinion;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.*;
 
 import generic.continues.GenericFactory;
@@ -36,6 +37,8 @@ import ghidra.framework.options.Options;
 import ghidra.program.database.mem.FileBytes;
 import ghidra.program.model.address.*;
 import ghidra.program.model.data.*;
+import ghidra.program.model.lang.Register;
+import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryAccessException;
@@ -114,7 +117,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 		monitor.setMessage("Completing PE header parsing...");
 		FileBytes fileBytes = MemoryBlockUtils.createFileBytes(program, provider, monitor);
 		try {
-			Map<Integer, Address> sectionNumberToAddress =
+			Map<SectionHeader, Address> sectionToAddress =
 				processMemoryBlocks(pe, program, fileBytes, monitor, log);
 
 			monitor.setCancelEnabled(false);
@@ -133,13 +136,15 @@ public class PeLoader extends AbstractPeDebugLoader {
 				}
 			}
 
+			setProcessorContext(fileHeader, program, monitor, log);
+
 			processExports(optionalHeader, program, monitor, log);
 			processImports(optionalHeader, program, monitor, log);
 			processRelocations(optionalHeader, program, monitor, log);
-			processDebug(optionalHeader, sectionNumberToAddress, program, monitor);
+			processDebug(optionalHeader, fileHeader, sectionToAddress, program, monitor);
 			processProperties(optionalHeader, program, monitor);
 			processComments(program.getListing(), monitor);
-			processSymbols(fileHeader, sectionNumberToAddress, program, monitor, log);
+			processSymbols(fileHeader, sectionToAddress, program, monitor, log);
 
 			processEntryPoints(ntHeader, program, monitor);
 			String compiler = CompilerOpinion.getOpinion(pe, provider).toString();
@@ -177,7 +182,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 	}
 
 	@Override
-	public String validateOptions(ByteProvider provider, LoadSpec loadSpec, List<Option> options) {
+	public String validateOptions(ByteProvider provider, LoadSpec loadSpec, List<Option> options, Program program) {
 		if (options != null) {
 			for (Option option : options) {
 				String name = option.getName();
@@ -188,7 +193,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 				}
 			}
 		}
-		return super.validateOptions(provider, loadSpec, options);
+		return super.validateOptions(provider, loadSpec, options, program);
 	}
 
 	@Override
@@ -257,12 +262,12 @@ public class PeLoader extends AbstractPeDebugLoader {
 		}
 	}
 
-	private void processSymbols(FileHeader fileHeader, Map<Integer, Address> sectionNumberToAddress,
+	private void processSymbols(FileHeader fileHeader, Map<SectionHeader, Address> sectionToAddress,
 			Program program, TaskMonitor monitor, MessageLog log) {
 		List<DebugCOFFSymbol> symbols = fileHeader.getSymbols();
 		int errorCount = 0;
 		for (DebugCOFFSymbol symbol : symbols) {
-			if (!processDebugCoffSymbol(symbol, sectionNumberToAddress, program, monitor)) {
+			if (!processDebugCoffSymbol(symbol, fileHeader, sectionToAddress, program, monitor)) {
 				++errorCount;
 			}
 		}
@@ -314,7 +319,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 				space.getAddress(originalImageBase + brdd.getVirtualAddress() + brdd.getSize()));
 		AddressRange headerRange = new AddressRangeImpl(space.getAddress(originalImageBase),
 			space.getAddress(originalImageBase + optionalHeader.getSizeOfHeaders()));
-		DataConverter conv = new LittleEndianDataConverter();
+		DataConverter conv = LittleEndianDataConverter.INSTANCE;
 
 		for (BaseRelocation reloc : relocs) {
 			if (monitor.isCancelled()) {
@@ -465,6 +470,27 @@ public class PeLoader extends AbstractPeDebugLoader {
 		}
 	}
 
+	private void setProcessorContext(FileHeader fileHeader, Program program, TaskMonitor monitor,
+			MessageLog log) {
+
+		try {
+			String machineName = fileHeader.getMachineName();
+			if ("450".equals(machineName) || "452".equals(machineName)) {
+				Register tmodeReg = program.getProgramContext().getRegister("TMode");
+				if (tmodeReg == null) {
+					return;
+				}
+				RegisterValue thumbMode = new RegisterValue(tmodeReg, BigInteger.ONE);
+				AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
+				program.getProgramContext().setRegisterValue(space.getMinAddress(),
+					space.getMaxAddress(), thumbMode);
+			}
+		}
+		catch (ContextChangeException e) {
+			throw new AssertException("instructions should not exist");
+		}
+	}
+
 	private void processExports(OptionalHeader optionalHeader, Program program, TaskMonitor monitor,
 			MessageLog log) {
 
@@ -563,16 +589,16 @@ public class PeLoader extends AbstractPeDebugLoader {
 		}
 	}
 
-	private Map<Integer, Address> processMemoryBlocks(PortableExecutable pe, Program prog,
+	private Map<SectionHeader, Address> processMemoryBlocks(PortableExecutable pe, Program prog,
 			FileBytes fileBytes, TaskMonitor monitor, MessageLog log)
 			throws AddressOverflowException, IOException {
 
 		AddressFactory af = prog.getAddressFactory();
 		AddressSpace space = af.getDefaultAddressSpace();
-		Map<Integer, Address> sectionNumberToAddress = new HashMap<>();
+		Map<SectionHeader, Address> sectionToAddress = new HashMap<>();
 
 		if (monitor.isCancelled()) {
-			return sectionNumberToAddress;
+			return sectionToAddress;
 		}
 		monitor.setMessage("[" + prog.getName() + "]: processing memory blocks...");
 
@@ -586,7 +612,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 		}
 
 		// Header block
-		int virtualSize = getVirtualSize(pe, sections, space);
+		int virtualSize = (int) Math.min(getVirtualSize(pe, sections, space), fileBytes.getSize());
 		long addr = optionalHeader.getImageBase();
 		Address address = space.getAddress(addr);
 
@@ -600,7 +626,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 		try {
 			for (int i = 0; i < sections.length; ++i) {
 				if (monitor.isCancelled()) {
-					return sectionNumberToAddress;
+					return sectionToAddress;
 				}
 
 				addr = sections[i].getVirtualAddress() + optionalHeader.getImageBase();
@@ -631,7 +657,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 						MemoryBlockUtils.createInitializedBlock(prog, false,
 							sections[i].getReadableName(), address, fileBytes, offset, dataSize, "",
 							"", r, w, x, log);
-						sectionNumberToAddress.put(i + 1, address);
+						sectionToAddress.put(sections[i], address);
 					}
 					if (rawDataSize == virtualSize) {
 						continue;
@@ -660,7 +686,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 					if (dataSize > 0) {
 						MemoryBlockUtils.createUninitializedBlock(prog, false,
 							sections[i].getReadableName(), address, dataSize, "", "", r, w, x, log);
-						sectionNumberToAddress.put(i + 1, address);
+						sectionToAddress.put(sections[i], address);
 					}
 				}
 
@@ -673,7 +699,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 			Msg.warn(this, "Section header processing aborted");
 		}
 
-		return sectionNumberToAddress;
+		return sectionToAddress;
 	}
 
 	private int getVirtualSize(PortableExecutable pe, SectionHeader[] sections,
@@ -735,8 +761,8 @@ public class PeLoader extends AbstractPeDebugLoader {
 		symTable.addExternalEntryPoint(entryAddr);
 	}
 
-	private void processDebug(OptionalHeader optionalHeader,
-			Map<Integer, Address> sectionNumberToAddress, Program program, TaskMonitor monitor) {
+	private void processDebug(OptionalHeader optionalHeader, FileHeader fileHeader,
+			Map<SectionHeader, Address> sectionToAddress, Program program, TaskMonitor monitor) {
 		if (monitor.isCancelled()) {
 			return;
 		}
@@ -758,7 +784,7 @@ public class PeLoader extends AbstractPeDebugLoader {
 			return;
 		}
 
-		processDebug(parser, sectionNumberToAddress, program, monitor);
+		processDebug(parser, fileHeader, sectionToAddress, program, monitor);
 	}
 
 	@Override

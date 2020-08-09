@@ -20,7 +20,6 @@ import java.util.Stack;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
-import ghidra.app.plugin.core.datamgr.archive.SourceArchive;
 import ghidra.app.services.DataTypeReference;
 import ghidra.app.services.DataTypeReferenceFinder;
 import ghidra.program.model.address.*;
@@ -284,7 +283,7 @@ public final class ReferenceUtils {
 			Accumulator<LocationReference> accumulator, Program program, DataType dataType,
 			String fieldName, TaskMonitor monitor) throws CancelledException {
 
-		Set<DataTypeReferenceFinder> finders =
+		List<DataTypeReferenceFinder> finders =
 			ClassSearcher.getInstances(DataTypeReferenceFinder.class);
 
 		Consumer<DataTypeReference> callback = ref -> {
@@ -329,23 +328,7 @@ public final class ReferenceUtils {
 	 * @return The highest level data type for the given data type.
 	 */
 	public static DataType getBaseDataType(DataType dataType) {
-		if (dataType instanceof Array) {
-			return getBaseDataType(((Array) dataType).getDataType());
-		}
-		else if (dataType instanceof Pointer) {
-			DataType baseDataType = ((Pointer) dataType).getDataType();
-			if (baseDataType != null) {
-				return getBaseDataType(baseDataType);
-			}
-		}
-
-		// NOTE: we do not unroll TypeDefs.  This allows clients of this API to search for
-		//       TypeDefs.  If we get the base type, then the client cannot search for them.
-		//else if (dataType instanceof TypeDef) {
-		//	DataType baseDataType = ((TypeDef) dataType).getBaseDataType();
-		//	return getBaseDataType(baseDataType);
-		//}
-		return dataType;
+		return getBaseDataType(dataType, false);
 	}
 
 	/**
@@ -365,17 +348,17 @@ public final class ReferenceUtils {
 	 */
 	public static DataType getBaseDataType(DataType dataType, boolean includeTypedefs) {
 		if (dataType instanceof Array) {
-			return getBaseDataType(((Array) dataType).getDataType());
+			return getBaseDataType(((Array) dataType).getDataType(), includeTypedefs);
 		}
 		else if (dataType instanceof Pointer) {
 			DataType baseDataType = ((Pointer) dataType).getDataType();
 			if (baseDataType != null) {
-				return getBaseDataType(baseDataType);
+				return getBaseDataType(baseDataType, includeTypedefs);
 			}
 		}
-		else if (dataType instanceof TypeDef) {
+		else if (includeTypedefs && dataType instanceof TypeDef) {
 			DataType baseDataType = ((TypeDef) dataType).getBaseDataType();
-			return getBaseDataType(baseDataType);
+			return getBaseDataType(baseDataType, includeTypedefs);
 		}
 		return dataType;
 	}
@@ -727,16 +710,9 @@ public final class ReferenceUtils {
 			return null;
 		}
 
-		List<Object> objects = variableOffset.getObjects();
-		Object object = objects.get((int) variableOffset.getOffset());
-		if (!(object instanceof LabelString)) {
-			return null;
-		}
-
 		Variable variable = variableOffset.getVariable();
 		DataType type = variable.getDataType();
-		LabelString label = (LabelString) object;
-		String string = label.toString();
+		String string = variableOffset.getDataTypeDisplayText();
 		GenericDataTypeLocationDescriptor descriptor =
 			createGenericDataTypeLocationDescriptor(program, type, string);
 		return descriptor;
@@ -842,7 +818,7 @@ public final class ReferenceUtils {
 		}
 
 		Composite composite = (Composite) baseParent;
-		DataTypeComponent[] components = composite.getComponents();
+		DataTypeComponent[] components = composite.getDefinedComponents();
 		String name = path.pop();
 		for (DataTypeComponent component : components) {
 			if (component.getFieldName().equals(name)) {
@@ -1044,7 +1020,7 @@ public final class ReferenceUtils {
 		}
 
 		Composite c = (Composite) dt;
-		DataTypeComponent[] components = c.getComponents();
+		DataTypeComponent[] components = c.getDefinedComponents();
 		for (DataTypeComponent component : components) {
 			if (SystemUtilities.isEqual(component.getFieldName(), fieldName)) {
 				return component;

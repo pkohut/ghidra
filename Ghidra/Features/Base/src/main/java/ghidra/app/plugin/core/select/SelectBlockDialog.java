@@ -33,6 +33,7 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.address.*;
 import ghidra.program.util.ProgramSelection;
 import ghidra.util.HelpLocation;
+import ghidra.util.layout.PairLayout;
 
 /**
  * Class to set up dialog box that will enable the user
@@ -86,25 +87,18 @@ class SelectBlockDialog extends DialogComponentProvider {
 	private JPanel buildBlockPanel() {
 		JPanel main = new JPanel();
 		main.setBorder(BorderFactory.createTitledBorder("Byte Selection"));
-		main.setLayout(new GridBagLayout());
-		GridBagConstraints gbc = new GridBagConstraints();
-		gbc.insets = new Insets(2, 2, 2, 2);
-		gbc.anchor = GridBagConstraints.WEST;
-		gbc.gridx = 0;
-		gbc.gridy = 0;
+		
+		main.setLayout(new PairLayout());
 
-		main.add(new GLabel("Ending Address:"), gbc);
-		gbc.gridx++;
+		main.add(new GLabel("Ending Address:"));
 		toAddressField = new JTextField(10);
-		main.add(toAddressField, gbc);
-		gbc.gridx = 0;
-		gbc.gridy++;
-		main.add(new GLabel("Length: "), gbc);
-		gbc.gridx++;
+		main.add(toAddressField);
+
+		main.add(new GLabel("Length: "));
 		numberInputField = new IntegerTextField(10);
 		numberInputField.setMaxValue(BigInteger.valueOf(Integer.MAX_VALUE));
 		numberInputField.setAllowNegativeValues(false);
-		main.add(numberInputField.getComponent(), gbc);
+		main.add(numberInputField.getComponent());
 		return main;
 	}
 
@@ -122,7 +116,7 @@ class SelectBlockDialog extends DialogComponentProvider {
 		forwardButton.addActionListener(new ActionListener() {
 			@Override
 			public void actionPerformed(ActionEvent ae) {
-				setStatusText("Enter number of bytes to highlight");
+				setStatusText("Enter number of bytes to select");
 				setAddressFieldEnabled(false);
 				setLengthInputEnabled(true);
 			}
@@ -133,7 +127,7 @@ class SelectBlockDialog extends DialogComponentProvider {
 		backwardButton.addActionListener(new ActionListener() {
 			@Override
 			public void actionPerformed(ActionEvent ae) {
-				setStatusText("Enter number of bytes to highlight");
+				setStatusText("Enter number of bytes to select");
 				setAddressFieldEnabled(false);
 				setLengthInputEnabled(true);
 			}
@@ -171,7 +165,7 @@ class SelectBlockDialog extends DialogComponentProvider {
 		main.add(forwardButton, gbc);
 		gbc.gridy++;
 		main.add(backwardButton, gbc);
-		setStatusText("Enter number of bytes to highlight");
+		setStatusText("Enter number of bytes to select");
 		return main;
 	}
 
@@ -253,7 +247,6 @@ class SelectBlockDialog extends DialogComponentProvider {
 			toAddress = currentAddress;
 			currentAddress = tmp;
 		}
-		AddressFactory addressFactory = navigatable.getProgram().getAddressFactory();
 		AddressSet addressSet = new AddressSet(currentAddress, toAddress);
 		ProgramSelection selection = new ProgramSelection(addressSet);
 		NavigationUtils.setSelection(tool, navigatable, selection);
@@ -273,7 +266,6 @@ class SelectBlockDialog extends DialogComponentProvider {
 		// the addressable unit size of the processor
 		Address currentAddress = navigatable.getLocation().getAddress();
 
-		AddressFactory addressFactory = navigatable.getProgram().getAddressFactory();
 		AddressSet addressSet = new AddressSet(navigatable.getSelection());
 
 		if (addressSet.isEmpty()) {

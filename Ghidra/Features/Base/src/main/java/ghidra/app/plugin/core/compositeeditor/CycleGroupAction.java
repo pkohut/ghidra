@@ -19,7 +19,6 @@ import javax.swing.KeyStroke;
 
 import docking.ActionContext;
 import docking.action.KeyBindingData;
-import docking.action.KeyBindingType;
 import ghidra.program.model.data.CycleGroup;
 
 /**
@@ -27,15 +26,15 @@ import ghidra.program.model.data.CycleGroup;
  */
 public class CycleGroupAction extends CompositeEditorTableAction {
 
-	private final static String GROUP_NAME = CYCLE_ACTION_GROUP;
+	private final static String GROUP_NAME = DATA_ACTION_GROUP;
 	private CycleGroup cycleGroup;
 
 	public CycleGroupAction(CompositeEditorProvider provider, CycleGroup cycleGroup) {
 		super(provider, cycleGroup.getName(), GROUP_NAME,
 			new String[] { "Cycle", cycleGroup.getName() },
-			new String[] { "Cycle", cycleGroup.getName() }, null, KeyBindingType.SHARED);
+			new String[] { "Cycle", cycleGroup.getName() }, null);
 		this.cycleGroup = cycleGroup;
-
+		getPopupMenuData().setParentMenuGroup(GROUP_NAME);
 		initKeyStroke(cycleGroup.getDefaultKeyStroke());
 	}
 
